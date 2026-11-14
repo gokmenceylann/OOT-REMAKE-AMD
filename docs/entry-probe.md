@@ -1,12 +1,10 @@
-# rtld giriş testi
+
+`a64_compile.py` Capstone komutlarını tipli IR'ye çevirir. C++20 çıktısı `a64_state.hpp` ile X0–X30, SP, NZCV ve sınır denetimli belleği kullanır. [Komut kapsamı](a64.md)
 
 ```powershell
-python -m pip install -r requirements.txt
 python lift_rtld.py 'C:\Games\OOT\exefs' entry-local.cpp --host-fill
 cl /nologo /std:c++20 /O2 /EHsc entry-local.cpp /Fe:entry-local.exe
 .\entry-local.exe
 ```
 
-Test X0 ve X1 için sıfır giriş varsayar. Varsayılan mod ilk BL öncesinde durur. `--host-fill`, doğrulanmış rtld text hash'i ve 0x30 → 0x21e0 çağrısı için sınır denetimli host memset çalıştırır. Bellek bir test tamponudur. Laptopta 264 bayt yazdı ve 0x48 → 0x100 çağrısında durdu.
-
-Oyun başlatma, Horizon servisleri, NVN2 çizimi ve FSR bu testte uygulanmış değildir. Oyun verisinden türetilen C++ ve EXE dosyalarını yayımlama.
+Varsayılan RTLD denemesi ilk BL'de durur. `--host-fill` doğrulanmış RTLD revizyonunda ilk yordamı test belleğinde çalıştırıp bir sonraki BL'ye ulaşır. Oyundan üretilen C++ veya EXE dosyaları yerelde kalmalıdır. [RTLD ayrıntıları](docs/entry-probe.md)

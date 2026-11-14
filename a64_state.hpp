@@ -1,15 +1,17 @@
 #pragma once
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
 #include <span>
 
-enum class Status { returned, fell_through, memory_fault, bad_return, budget_exhausted };
+enum class Status { returned, fell_through, memory_fault, bad_return, budget_exhausted, external_branch };
 
 struct A64State {
     static constexpr std::uint64_t return_to_host = UINT64_MAX;
     std::array<std::uint64_t, 32> x{};  // Slot 31 is SP. XZR is handled by the compiler.
     bool n{}, z{}, c{}, v{};
+    std::uint64_t pc{}, stop_target{};
     std::uint64_t memory_base{};
     std::span<std::uint8_t> memory;
 
@@ -29,6 +31,12 @@ struct A64State {
             size <= memory.size() - (address - memory_base);
     }
 
+    bool fill(std::uint64_t address, std::uint64_t value, std::size_t size) {
+        if (!contains(address, size)) return false;
+        if (size) std::fill_n(memory.data() + (address - memory_base), size, std::uint8_t(value));
+        return true;
+    }
+
     bool load(std::uint64_t address, std::size_t size, std::uint64_t& value) const {
         if (size > 8 || !contains(address, size)) return false;
         value = 0;
@@ -45,4 +53,5 @@ struct A64State {
     }
 };
 
-Status run_a64(A64State& s, std::uint64_t budget);
+Status run_a64(A64State& s, std::uint64_t budget,
+               std::uint64_t return_address = A64State::return_to_host);

@@ -1,26 +1,37 @@
 # OOT Remake AMD
 
-Bağımsız Windows x64 statik port araştırması. İlk aşama, önceden ayrıştırılmış ExeFS dizinindeki NSO0 modüllerinin temel segment sınırlarını denetler. Python 3.10 veya üzeri gerekir.
+Windows x64 statik yeniden derleme araştırması. Bu sürüm NSO yükleme ve sembol çözümlemesini, temel AArch64 bloklarını C++20'ye çevirmeyi ve RTLD başlangıç denemesini destekler. Zelda'yı başlatmak için Horizon ve NVN2 çalışma ortamı hâlâ eksiktir.
 
-```powershell
-python inspect_exefs.py 'C:\Games\OOT\exefs'
-python -m unittest -v
-```
-
-Araç kaynak oyun dosyalarına yazmaz ve yalnızca başlık metadatasını raporlar. Ek araç, düz veya LZ4 sıkıştırmalı segmentleri bellekte açıp sağlanan SHA-256 değerlerini denetler. ZBIC, relocation, AArch64 çevirisi, Horizon servisleri ve NVN2 çizimi bu sürümün kapsamında değildir. **Bu sürüm Zelda'yı başlatmaz.** Depo Nintendo içeriği veya anahtarı içermez.
-
-[NSO başlık referansı](https://github.com/switchbrew/switch-tools/blob/master/src/elf2nso.c)
+## Yerel ExeFS
 
 ```powershell
 python -m pip install -r requirements.txt
+python inspect_exefs.py 'C:\Games\OOT\exefs'
 python verify_exefs.py 'C:\Games\OOT\exefs'
-python -m unittest -v
+python map_exefs.py 'C:\Games\OOT\exefs'
+python link_exefs.py 'C:\Games\OOT\exefs'
 ```
 
-## Modül eşleme
+Bu komutlar sırasıyla NSO sınırlarını kontrol eder, düz/LZ4 segmentlerinin hash'lerini doğrular, BSS ile birlikte belleğe eşleyip RELR/RELA uygular ve modüller arası ABS64, GLOB_DAT, JUMP_SLOT sembollerini çözer. Kaynak oyun dosyalarına yazılmaz.
+
+## AArch64 ve RTLD
+
+`a64_compile.py` Capstone komutlarını tipli IR'ye çevirir. C++20 çıktısı `a64_state.hpp` ile X0–X30, SP, NZCV ve sınır denetimli belleği kullanır. [Komut kapsamı](docs/a64.md)
 
 ```powershell
-python map_exefs.py 'C:\Games\OOT\exefs'
+python lift_rtld.py 'C:\Games\OOT\exefs' entry-local.cpp --host-fill
+cl /nologo /std:c++20 /O2 /EHsc entry-local.cpp /Fe:entry-local.exe
+.\entry-local.exe
 ```
 
-Araç doğrulanmış NSO segmentlerini ve sıfır dolgulu BSS'yi belleğe eşler. Sembol gerektirmeyen AArch64 RELA ve sıkıştırılmış RELR relocation kayıtlarını uygular. ABS64, GLOB_DAT ve JUMP_SLOT girdilerini ayrı sayar. Kaynak dosyalara yazmaz ve eşlenen görüntüyü dışarı aktarmaz. Bu komut bir modül denetimidir. Oyun yürütme ortamı henüz yoktur.
+Varsayılan RTLD denemesi ilk BL'de durur. `--host-fill` doğrulanmış RTLD revizyonunda ilk yordamı test belleğinde çalıştırıp bir sonraki BL'ye ulaşır. Oyundan üretilen C++ veya EXE dosyaları yerelde kalmalıdır. [RTLD ayrıntıları](docs/entry-probe.md)
+
+## Testler
+
+```powershell
+python -m pip install -r requirements-dev.txt
+python -m unittest discover -s tests -v
+python tests/differential.py --llvm-bin 'C:\Tools\llvm-mingw\bin'
+```
+
+Karşılaştırma testi LLVM ile AArch64 test kodu oluşturur, Unicorn'dan beklenen sonuçları alır ve derlenen x64 çıktısının register, NZCV ve bellek durumunu karşılaştırır.

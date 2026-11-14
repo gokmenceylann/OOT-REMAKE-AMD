@@ -95,12 +95,20 @@ def lower(op, text):
     raise ValueError(f"unsupported form: {op} {text}")
 
 
-def decode(code, base=0):
+def decode(code, base=0, reachable=False, stop_calls=False, host_fill=None):
     if not code or len(code) % 4 or base % 4 or not 0 <= base <= (1 << 64) - len(code) - 4:
         raise ValueError("expected aligned guest base and complete instruction words")
     decoder = Cs(CS_ARCH_ARM64, CS_MODE_ARM)
     result = []
-    for offset in range(0, len(code), 4):
+    offsets = [0] if reachable else list(range(0, len(code), 4))
+    seen = set()
+    while offsets:
+        offset = offsets.pop()
+        if offset in seen:
+            continue
+        if offset < 0 or offset + 4 > len(code) or offset % 4:
+            raise ValueError(f"invalid instruction target at {base + offset:#x}")
+        seen.add(offset)
         pc = base + offset
         ins = next(decoder.disasm(code[offset:offset + 4], pc), None)
         if ins is None:
@@ -110,10 +118,22 @@ def decode(code, base=0):
         except ValueError as exc:
             raise ValueError(f"{pc:#x}: {exc}") from exc
         result.append(Instruction(pc, ins.mnemonic, args))
+        if reachable and ins.mnemonic != "ret":
+            direct = ins.mnemonic in ("b", "bl", "cbz", "cbnz") or ins.mnemonic.startswith("b.")
+            if direct:
+                if not stop_calls or ins.mnemonic == "b":
+                    offsets.append(args[-1] - base)
+            if ins.mnemonic not in ("b", "bl") or (ins.mnemonic == "bl" and (not stop_calls or (pc, args[0]) == host_fill)):
+                if offset + 4 < len(code):
+                    offsets.append(offset + 4)
+    result.sort(key=lambda ins: ins.pc)
     addresses = {ins.pc for ins in result}
     for ins in result:
         if ins.op in ("b", "bl", "cbz", "cbnz") or ins.op.startswith("b."):
-            if ins.args[-1] not in addresses:
+            if ins.op == "bl" and stop_calls:
+                if ins.args[0] < base or ins.args[0] >= base + len(code) or ins.args[0] % 4:
+                    raise ValueError(f"{ins.pc:#x}: invalid call target")
+            elif ins.args[-1] not in addresses and not (stop_calls and ins.op != "b"):
                 raise ValueError(f"{ins.pc:#x}: branch target outside input")
     return result
 
@@ -135,9 +155,15 @@ def write(dest, expr):
     return [f"s.x[{dest.index}] = std::uint{dest.width}_t({expr});"]
 
 
-def emit(ins, last):
+def emit(ins, last, addresses, stop_calls, host_fill):
     op, args = ins.op, ins.args
     out = []
+
+    def jump(target):
+        if target in addresses:
+            return f"goto L{target:x};"
+        return f"{{ s.stop_target = {literal(target)}; return Status::external_branch; }}"
+
     if op in ARITHMETIC | LOGICAL:
         dest, lhs, rhs = args
         width = dest.width
@@ -166,37 +192,46 @@ def emit(ins, last):
     elif op == "b":
         return [f"goto L{args[0]:x};"]
     elif op == "bl":
-        return [f"s.x[30] = {literal(ins.pc + 4)};", f"goto L{args[0]:x};"]
+        link = f"s.x[30] = {literal(ins.pc + 4)};"
+        if (ins.pc, args[0]) == host_fill:
+            return [link, "if (!s.fill(s.x[0], s.x[1], s.x[2])) return Status::memory_fault;"]
+        if stop_calls:
+            return [link, f"s.stop_target = {literal(args[0])};", "return Status::external_branch;"]
+        return [link, jump(args[0])]
     elif op == "ret":
         return [f"target = {read(args[0])};", "goto indirect;"]
     elif op.startswith("b."):
         expr = re.sub(r"\b[nzcv]\b", lambda m: "s." + m[0], CONDITIONS[op[2:]])
-        out.append(f"if ({expr}) goto L{args[0]:x};")
+        out.append(f"if ({expr}) {jump(args[0])}")
     elif op in ("cbz", "cbnz"):
         comparison = "==" if op == "cbz" else "!="
-        out.append(f"if ({read(args[0])} {comparison} 0) goto L{args[1]:x};")
+        out.append(f"if ({read(args[0])} {comparison} 0) {jump(args[1])}")
     if last:
         out.append("return Status::fell_through;")
     return out
 
 
-def compile_block(code, base=0):
-    ir = decode(code, base)
+def compile_block(code, base=0, *, stop_calls=False, host_fill=None):
+    ir = decode(code, base, reachable=stop_calls, stop_calls=stop_calls, host_fill=host_fill)
+    addresses = {ins.pc for ins in ir}
     has_return = any(ins.op == "ret" for ins in ir)
-    lines = ['#include "a64_state.hpp"', "Status run_a64(A64State& s, std::uint64_t budget) {"]
+    lines = ['#include "a64_state.hpp"', "Status run_a64(A64State& s, std::uint64_t budget, [[maybe_unused]] std::uint64_t return_address) {"]
     if has_return:
         lines.append("    std::uint64_t target = 0;")
     targets = {ins.pc for ins in ir} if has_return else {
         ins.args[-1] for ins in ir if ins.op in ("b", "bl", "cbz", "cbnz") or ins.op.startswith("b.")
     }
+    targets &= addresses
+    if stop_calls and not has_return:
+        targets = {ins.args[-1] for ins in ir if ins.op != 'bl' and (ins.op in ('b', 'cbz', 'cbnz') or ins.op.startswith('b.'))} & addresses
     for i, ins in enumerate(ir):
         if ins.pc in targets:
             lines.append(f"L{ins.pc:x}:")
-        lines += ["    {", "        if (!budget--) return Status::budget_exhausted;"]
-        lines += ["        " + line for line in emit(ins, i == len(ir) - 1)]
+        lines += ["    {", "        if (!budget--) return Status::budget_exhausted;", f"        s.pc = {literal(ins.pc)};"]
+        lines += ["        " + line for line in emit(ins, i == len(ir) - 1 or ir[i + 1].pc != ins.pc + 4, addresses, stop_calls, host_fill)]
         lines.append("    }")
     if has_return:
-        lines += ["indirect:", "    if (target == A64State::return_to_host) return Status::returned;",
+        lines += ["indirect:", "    if (target == return_address) return Status::returned;",
                   "    switch (target) {"]
         lines += [f"    case {literal(ins.pc)}: goto L{ins.pc:x};" for ins in ir]
         lines += ["    default: return Status::bad_return;", "    }"]
