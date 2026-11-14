@@ -30,7 +30,7 @@ def oracle(code, x0):
         raise RuntimeError("guest did not return")
     regs = [cpu.reg_read(reg) for reg in REGS]
     flags = cpu.reg_read(arm.UC_ARM64_REG_NZCV) >> 28
-    vectors = [cpu.reg_read(getattr(arm, f'UC_ARM64_REG_Q{i}')) for i in range(9)]
+    vectors = [cpu.reg_read(getattr(arm, f'UC_ARM64_REG_Q{i}')) for i in range(11)]
     return regs, flags, vectors, bytes(cpu.mem_read(RAM - 16, 48))
 
 
@@ -90,7 +90,7 @@ def main():
             run("clang++" + suffix, "-std=c++20", "-O2", "-Wall", "-Wextra", "-Werror",
                 "-I", str(ROOT), str(cpp), str(source), "-o", str(executable))
             run(str(executable))
-        for fixture in ("host_abi", "horizon"):
+        for fixture in ("host_abi", "horizon", "fp_state"):
             run("clang" + suffix, "--target=aarch64-none-elf", "-c", str(ROOT / f"tests/{fixture}.S"), "-o", str(obj))
             run("llvm-objcopy" + suffix, "-O", "binary", "--only-section=.text", str(obj), str(binary))
             generated = temp / f"{fixture}.cpp"

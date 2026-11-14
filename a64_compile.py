@@ -163,6 +163,10 @@ def lower(op, text):
         return (register(tokens[0]),)
     elif op == "ret" and len(tokens) <= 1:
         return (register(tokens[0] if tokens else "x30"),)
+    elif op == "mrs" and len(tokens) == 2 and tokens[1] in ("fpcr", "fpsr"):
+        return register(tokens[0]), tokens[1]
+    elif op == "msr" and len(tokens) == 2 and tokens[0] in ("fpcr", "fpsr"):
+        return register(tokens[1]), tokens[0]
     elif op == "svc" and len(tokens) == 1:
         return (immediate(tokens[0]),)
     elif op == "nop" and not tokens:
@@ -239,6 +243,8 @@ def emit(ins, last, addresses, stop_calls, host_fill):
             return f"goto L{target:x};"
         return f"{{ s.stop_target = {literal(target)}; return Status::external_branch; }}"
 
+    if op in ("fadd", "fsub", "fmul", "fdiv"):
+        out.append("if (s.fpcr) return Status::unsupported_fp_mode;")
     if isinstance(args[0] if args else None, str):
         shape, dest, lhs, rhs = args
         width = {"b": 8, "h": 16, "s": 32, "d": 64}[shape[-1]]
@@ -346,6 +352,11 @@ def emit(ins, last, addresses, stop_calls, host_fill):
                 out.append(f"if (!s.store({location}, {size}, {read(dest)})) return Status::memory_fault;")
         if mem.writeback:
             out += write(mem.base, "updated")
+    elif op == "mrs":
+        out += write(args[0], f"s.{args[1]}")
+    elif op == "msr":
+        mask = "0x07ff9f07u" if args[1] == "fpcr" else "0xf800009fu"
+        out.append(f"s.{args[1]} = std::uint32_t({read(args[0])}) & {mask};")
     elif op == "svc":
         out += [f"const auto service = s.invoke_service({args[0]});",
                 "if (service != ServiceResult::resume) return service == ServiceResult::exit_process",

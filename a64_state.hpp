@@ -5,13 +5,14 @@
 #include <cstdint>
 #include <span>
 
-enum class Status { returned, fell_through, memory_fault, bad_return, budget_exhausted, external_branch, guest_exit, unsupported_service };
+enum class Status { returned, fell_through, memory_fault, bad_return, budget_exhausted, external_branch, guest_exit, unsupported_service, unsupported_fp_mode };
 enum class ServiceResult { resume, exit_process, unsupported };
 
 struct A64State {
     static constexpr std::uint64_t return_to_host = UINT64_MAX;
     std::array<std::uint64_t, 32> x{};  // Slot 31 is SP. XZR is handled by the compiler.
     std::array<std::array<std::uint64_t, 2>, 32> q{};
+    std::uint32_t fpcr{}, fpsr{};
     bool n{}, z{}, c{}, v{};
     std::uint64_t pc{}, stop_target{};
     std::uint64_t memory_base{};

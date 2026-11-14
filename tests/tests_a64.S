@@ -20,6 +20,8 @@ nested:
     mul v6.4h, v1.4h, v2.4h
     fadd v7.2d, v1.2d, v2.2d
     fmul v8.2s, v1.2s, v2.2s
+    fsub v9.2d, v2.2d, v1.2d
+    fdiv v10.2d, v2.2d, v1.2d
     add v4.16b, v4.16b, v3.16b
     mov w9, #0x1234
     movk w9, #0xabcd, lsl #16
