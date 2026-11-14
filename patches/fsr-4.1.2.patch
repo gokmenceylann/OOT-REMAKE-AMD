@@ -63,7 +63,7 @@ index 0000000..60c699d
 +
 +}
 diff --git a/gpu/vk/vk_fsr3.cpp b/gpu/vk/vk_fsr3.cpp
-index 77e5a80..47d3f88 100644
+index 77e5a80..7cf783a 100644
 --- a/gpu/vk/vk_fsr3.cpp
 +++ b/gpu/vk/vk_fsr3.cpp
 @@ -21,6 +21,7 @@
@@ -74,7 +74,15 @@ index 77e5a80..47d3f88 100644
  #include "vk_temporal.h"   // (temporal_env_chosen: RX_VK_DLSS / RX_VK_FSR4 over the row's FSR 3.1)
  #include "vk_texture.h"
  #include "upscaler_rows.h"
-@@ -751,6 +752,14 @@ bool fsr3_wanted() {
+@@ -694,6 +695,7 @@ struct Out {
+     int reason_repeats = 0;
+     bool told_first = false;
+     uint64_t drawn = 0;
++    uint64_t last_upscaled_frame = 0;
+ };
+ Out& out_state() {
+     static Out o;
+@@ -751,6 +753,14 @@ bool fsr3_wanted() {
      if (env == 0) return false;
      // (the Upscaler row's FSR 3.1, upscaler_rows.h, read each time: the row changes it while the game runs. RX_VK_DLSS=1 / 2
      // or RX_VK_FSR4=1 / 2 goes over the row, its FSR 3.1 too: vk_temporal.cpp's chain draws then)
@@ -89,6 +97,24 @@ index 77e5a80..47d3f88 100644
      return (env > 0 || (opts.dlss == upscaler_rows::FSR3 && !temporal_env_chosen())) && fsr3::supported();
  }
  
+@@ -783,7 +793,8 @@ bool fsr3_upscale(VkCommandBuffer cmd, uint64_t key, bool known, Texture* in, Vk
+     ai.jitter_phases = fsr3_inputs::jitter_size(2) ? fsr3_inputs::jitter_size(2) : 8;
+     ai.camera = f.camera;
+     ai.frame_time_ms = f.frame_ms;
+-    ai.reset = f.reset;
++    // Prepared camera history can advance even when an upscale does not reach the output.
++    ai.reset = f.reset || !o.last_upscaled_frame || f.frame - o.last_upscaled_frame != 1;
+     if (!fsr3::upscale(cmd, ai)) return fail("its passes could not be recorded");
+     {
+         const int32_t pc[2] = {(int32_t)ow, (int32_t)oh};
+@@ -800,6 +811,7 @@ bool fsr3_upscale(VkCommandBuffer cmd, uint64_t key, bool known, Texture* in, Vk
+         vkCmdDispatch(cmd, (ow + 7) / 8, (oh + 7) / 8, 1);
+     }
+     full_barrier(cmd);
++    o.last_upscaled_frame = f.frame;
+     fsr3_inputs::upscaled(f.width, f.height, ow, oh);
+     // (every 600 frames: that it still draws, and the jitter it was given, which says the host's jitter is on)
+     if (++o.drawn % 600 == 0)
 diff --git a/gpu/vk/vk_fsr4.cpp b/gpu/vk/vk_fsr4.cpp
 index 2a34a9c..c1801ff 100644
 --- a/gpu/vk/vk_fsr4.cpp
@@ -705,7 +731,7 @@ index e100bab..1624884 100644
  
  } // namespace mkwvk
 diff --git a/tests/temporal_history_test.cpp b/tests/temporal_history_test.cpp
-index 16acb1a..4dbf942 100644
+index 16acb1a..774212d 100644
 --- a/tests/temporal_history_test.cpp
 +++ b/tests/temporal_history_test.cpp
 @@ -16,10 +16,11 @@ struct State {
@@ -731,7 +757,25 @@ index 16acb1a..4dbf942 100644
  }
  Decision dlss(State& s, const Camera& cam, uint64_t now = 100) { return temporal(s, cam, now, false); }
  Decision fsr4(State& s, const Camera& cam, uint64_t now = 100) { return temporal(s, cam, now, true); }
-@@ -61,6 +62,12 @@ int main() {
+@@ -56,11 +57,30 @@ void policies(State& s, const Camera& camera, bool reset, uint64_t now = 100) {
+     }
+ }
+ 
++bool dispatch_reset(uint64_t frame, uint64_t last, bool input_reset) {
++    const struct { uint64_t frame; bool reset; } f{frame, input_reset};
++    const struct { uint64_t last_upscaled_frame; } o{last};
++    struct { bool reset; } ai{};
++    /* FSR_DISPATCH_POLICY */
++    return ai.reset;
++}
++
+ int main() {
++    check(dispatch_reset(10, 0, false), "first FSR 3.1 dispatch needs reset");
++    check(!dispatch_reset(10, 9, false), "consecutive FSR 3.1 dispatch lost history");
++    check(dispatch_reset(10, 8, false), "failed or skipped FSR 3.1 dispatch left stale history");
++    check(dispatch_reset(10, 10, false), "same-frame FSR 3.1 dispatch reused history");
++    check(dispatch_reset(10, 9, true), "input reset did not reach FSR 3.1");
+     State s; Camera camera;
      float current[16], previous[16], out[16];
      identity(s.last_vp); identity(camera.current);
      policies(s, camera, false);                     // ordinary consecutive frame
@@ -744,7 +788,7 @@ index 16acb1a..4dbf942 100644
      s.last_frame = 0; policies(s, camera, true);     // no prior history
      s.last_frame = 98; policies(s, camera, false);   // age 2 remains usable
      s.last_frame = 97; policies(s, camera, true);    // age 3 expires
-@@ -111,7 +118,8 @@ int main() {
+@@ -111,7 +131,8 @@ int main() {
              camera.current[0] = 1.3f / aspect; camera.current[5] = 1.3f;
              camera.current[10] = -1.01f; camera.current[11] = -0.2f;
              camera.current[14] = -1.0f; camera.current[15] = 0.0f;
@@ -777,10 +821,21 @@ index 432ae3f..034a642 100644
                                 near(dlss_halton(4, 2), 0.125f));
      CHECK("halton base 3", near(dlss_halton(1, 3), 1 / 3.0f) && near(dlss_halton(2, 3), 2 / 3.0f) && near(dlss_halton(3, 3), 1 / 9.0f));
 diff --git a/tests/test_temporal_history.py b/tests/test_temporal_history.py
-index a7851db..95a1dc3 100644
+index a7851db..1ffdbb9 100644
 --- a/tests/test_temporal_history.py
 +++ b/tests/test_temporal_history.py
-@@ -40,7 +40,7 @@ def main():
+@@ -25,8 +25,10 @@ def main():
+     dlss = (a.source / "gpu/vk/vk_dlss.cpp").read_text(encoding="utf-8")
+     fsr4 = (a.source / "gpu/vk/vk_fsr4.cpp").read_text(encoding="utf-8")
+     fsr = (a.source / "gpu/vk/vk_fsr3_inputs.cpp").read_text(encoding="utf-8")
++    fsr_dispatch = (a.source / "gpu/vk/vk_fsr3.cpp").read_text(encoding="utf-8")
+     fixture = (ROOT / "tests/temporal_history_test.cpp").read_text(encoding="utf-8")
+     assert "engine.e->evaluate(cmd, f)" in chain, "the shared frame must reach the selected engine"
++    fixture = fixture.replace("/* FSR_DISPATCH_POLICY */", re.search(r"ai\.reset = f\.reset[^;]*;", fsr_dispatch).group())
+     chain_sink = re.search(r"f\.reset = [^;]+;", chain).group()
+     dlss_sink = re.search(r"ep\.InReset = [^;]+;", dlss).group()
+     fsr4_sink = re.search(r"d\.reset = [^;]+;", fsr4).group()
+@@ -40,7 +42,7 @@ def main():
          cpp, exe = Path(folder) / "fixture.cpp", Path(folder) / "fixture.exe"
          cpp.write_text(fixture, encoding="utf-8")
          subprocess.run([a.cxx, "-std=c++20", "-O2", "-Wall", "-Wextra", "-Werror", "-pthread",
