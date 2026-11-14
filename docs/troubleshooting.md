@@ -31,3 +31,9 @@ try {
 Bu ayar ana Vulkan pipeline cache dosyasının bu oturumda belleğe yüklenmesini atlar. Mevcut shader program cache'i okunabilir ve cache dosyalarını silmek gerekmez. Bazı pipeline'lar oyun sırasında yeniden derlenebilir. RX 6700M testinde sorun çıkaran kayıt açıldı ve oyun içinde FSR 4.1.2 dispatch'i loglandı. Normal EXE açılışında varsayılan davranış geçerlidir.
 
 **English:** For save-load exits with allocation failures in the log, use the PowerShell example above to skip loading the main Vulkan pipeline cache for one run. The separate shader program cache can still load. This workaround was verified on RX 6700M with a successful save load and FSR 4.1.2 dispatch.
+
+## Otomatik pipeline cache bellek kontrolü
+
+Windows renderer, ana Vulkan pipeline cache'i okumadan önce süreç için kullanılabilir sistem commit alanını sorgular. İçe aktarmanın geçici maliyeti için dosya boyutunun iki katını, sahne yüklemesi için de 4 GiB pay ayıran bir eşik kullanır. Bu eşik bir bellek tahminidir. Vulkan device-local bütçesi, VMA tahsisleri ve WDDM dedicated/shared sayaçları ayrı kalır.
+
+Yer kalmazsa veya ana cache içe aktarılamazsa renderer boş bir Vulkan pipeline cache ile devam eder ve ana cache dosyasını değiştirmez. Shader program cache'i ayrı okunur. Oyun sırasında pipeline derlemesi görülebilir. Logda atlanan dosya boyutu ve mevcut commit alanı veya Vulkan içe aktarma hatası bulunur.

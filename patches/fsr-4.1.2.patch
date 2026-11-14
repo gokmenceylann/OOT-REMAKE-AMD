@@ -62,6 +62,112 @@ index 0000000..60c699d
 +}
 +
 +}
+diff --git a/gpu/vk/pipeline_cache_budget.h b/gpu/vk/pipeline_cache_budget.h
+new file mode 100644
+index 0000000..b293ac1
+--- /dev/null
++++ b/gpu/vk/pipeline_cache_budget.h
+@@ -0,0 +1,12 @@
++#pragma once
++#include <cstdint>
++
++namespace mkwvk {
++
++// Leave room for scene loading and a transient driver copy of the serialized cache.
++constexpr bool pipeline_cache_fits_commit(uint64_t bytes, uint64_t available) {
++    constexpr uint64_t scene_reserve = 4ull << 30;
++    return available >= scene_reserve && bytes <= (available - scene_reserve) / 2;
++}
++
++}
+diff --git a/gpu/vk/vk_draw.cpp b/gpu/vk/vk_draw.cpp
+index dd8c0a7..08986ba 100644
+--- a/gpu/vk/vk_draw.cpp
++++ b/gpu/vk/vk_draw.cpp
+@@ -41,6 +41,7 @@
+ #include "shader_recompiler/backend/spirv/emit_spirv.h"
+ 
+ #include "vk_paths.h"
++#include "pipeline_cache_budget.h"
+ #include "vk_draw.h"
+ #include "vk_menu.h"          // (opts.anisotropy: the Anisotropic filtering row; resolution_scale)
+ #include "upscaler_rows.h"    // (upscale_lod_bias: which upscalers draw the 3D smaller)
+@@ -725,14 +726,36 @@ std::atomic<int64_t> pcache_built_since_save{0};
+ // most precompiled pipelines as not found in the app's cache (~460 of ~12,900 here), which it then serves from its own.
+ std::atomic<size_t> pcache_saved_size{0};
+ /// A pipeline cache file's data, or nothing when it cannot be read or was made by another device or driver
+-std::vector<uint8_t> pcache_file_read(const std::string& path) {
++std::vector<uint8_t> pcache_file_read(const std::string& path, bool* commit_skip = nullptr) {
+     std::vector<uint8_t> data;
+     if (FILE* f = fopen(path.c_str(), "rb")) {
+         _fseeki64(f, 0, SEEK_END);
+         const int64_t sz = _ftelli64(f);
+         _fseeki64(f, 0, SEEK_SET);
++#ifdef _WIN32
++        if (commit_skip && sz > 32) {
++            MEMORYSTATUSEX status{};
++            status.dwLength = sizeof status;
++            if (GlobalMemoryStatusEx(&status) && !pipeline_cache_fits_commit((uint64_t)sz, status.ullAvailPageFile)) {
++                *commit_skip = true;
++                logf("vk: pipeline cache retained on disk: %llu bytes, available commit %llu bytes",
++                     (unsigned long long)sz, (unsigned long long)status.ullAvailPageFile);
++                fclose(f);
++                return {};
++            }
++        }
++#else
++        (void)commit_skip;
++#endif
+         if (sz > 32) {
+-            data.resize((size_t)sz);
++            try {
++                data.resize((size_t)sz);
++            } catch (const std::bad_alloc&) {
++                if (commit_skip) *commit_skip = true;
++                fclose(f);
++                logf("vk: pipeline cache retained on disk: host allocation failed for %llu bytes", (unsigned long long)sz);
++                return {};
++            }
+             if (fread(data.data(), 1, data.size(), f) != data.size()) data.clear();
+         }
+         fclose(f);
+@@ -808,7 +831,6 @@ size_t play_files_merge() {
+         VkPipelineCacheCreateInfo ci{VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO};
+         ci.initialDataSize = part.size(), ci.pInitialData = part.data();
+         if (part.empty() || vkCreatePipelineCache(dev.device, &ci, nullptr, &tmp) != VK_SUCCESS) {
+-            remove(path.c_str());
+             continue;
+         }
+         if (vkMergePipelineCaches(dev.device, pcache, 1, &tmp) == VK_SUCCESS) merged.push_back(path), merged_kb += part.size() >> 10;
+@@ -923,18 +945,24 @@ void pcache_init() {
+     // (RX_VK_PCACHE_LOAD=0, an A/B of what the file costs in memory: its 2.5 GB read whole and held by the driver. The cache
+     // starts empty and is not saved; the driver's own shader cache is all there is)
+     static const bool off = getenv("RX_VK_PCACHE_LOAD") && atoi(getenv("RX_VK_PCACHE_LOAD")) == 0;
+-    pcache_no_save = off;
+-    std::vector<uint8_t> data = off ? std::vector<uint8_t>{} : pcache_file_read(pcache_path);
++    bool commit_skip = false;
++    std::vector<uint8_t> data = off ? std::vector<uint8_t>{} : pcache_file_read(pcache_path, &commit_skip);
++    pcache_no_save = off || commit_skip;
+     VkPipelineCacheCreateInfo ci{VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO};
+     ci.initialDataSize = data.size();
+     ci.pInitialData = data.empty() ? nullptr : data.data();
+-    if (vkCreatePipelineCache(dev.device, &ci, nullptr, &pcache) != VK_SUCCESS) {
++    const VkResult result = vkCreatePipelineCache(dev.device, &ci, nullptr, &pcache);
++    if (result != VK_SUCCESS && !data.empty()) {
++        logf("vk: pipeline cache import failed: VkResult=%d; existing cache retained", (int)result);
++        commit_skip = pcache_no_save = true;
++        pcache = VK_NULL_HANDLE;
++        std::vector<uint8_t>().swap(data);
+         ci.initialDataSize = 0, ci.pInitialData = nullptr;
+         vkCreatePipelineCache(dev.device, &ci, nullptr, &pcache);
+     }
+     logf("vk: pipeline cache %s (%zu KB)", pcache_path.c_str(), data.size() >> 10);
+     data = {};
+-    if (pcache) play_files_merge();
++    if (pcache && !commit_skip) play_files_merge();
+     // (what it holds as read, the play files too: a save of data that size has nothing to add to the files)
+     size_t held = 0;
+     if (pcache && vkGetPipelineCacheData(dev.device, pcache, &held, nullptr) == VK_SUCCESS) pcache_saved_size = held;
 diff --git a/gpu/vk/vk_fsr3.cpp b/gpu/vk/vk_fsr3.cpp
 index 77e5a80..7cf783a 100644
 --- a/gpu/vk/vk_fsr3.cpp
@@ -954,6 +1060,24 @@ index 432ae3f..034a642 100644
      CHECK("halton base 2", near(dlss_halton(1, 2), 0.5f) && near(dlss_halton(2, 2), 0.25f) && near(dlss_halton(3, 2), 0.75f) &&
                                 near(dlss_halton(4, 2), 0.125f));
      CHECK("halton base 3", near(dlss_halton(1, 3), 1 / 3.0f) && near(dlss_halton(2, 3), 2 / 3.0f) && near(dlss_halton(3, 3), 1 / 9.0f));
+diff --git a/tests/test_pipeline_cache_budget.cpp b/tests/test_pipeline_cache_budget.cpp
+new file mode 100644
+index 0000000..450821e
+--- /dev/null
++++ b/tests/test_pipeline_cache_budget.cpp
+@@ -0,0 +1,12 @@
++#include "../gpu/vk/pipeline_cache_budget.h"
++
++using mkwvk::pipeline_cache_fits_commit;
++constexpr uint64_t GiB = 1ull << 30;
++static_assert(!pipeline_cache_fits_commit(1, 4 * GiB - 1));
++static_assert(!pipeline_cache_fits_commit(1, 4 * GiB));
++static_assert(pipeline_cache_fits_commit(GiB, 6 * GiB));
++static_assert(!pipeline_cache_fits_commit(GiB + 1, 6 * GiB));
++static_assert(pipeline_cache_fits_commit(1611639380, 8 * GiB));
++static_assert(!pipeline_cache_fits_commit(1611639380, 6 * GiB));
++static_assert(!pipeline_cache_fits_commit(UINT64_MAX, UINT64_MAX));
++int main() {}
 diff --git a/tests/test_temporal_history.py b/tests/test_temporal_history.py
 index a7851db..1ffdbb9 100644
 --- a/tests/test_temporal_history.py
