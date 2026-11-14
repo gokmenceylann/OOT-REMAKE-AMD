@@ -6,7 +6,6 @@ import subprocess
 import shutil
 import sys
 import tempfile
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from unicorn import Uc, UC_ARCH_ARM64, UC_MODE_ARM
 from unicorn import arm64_const as arm
@@ -24,24 +23,30 @@ def oracle(code, x0):
     cpu.reg_write(REGS[1], RAM + 16)
     cpu.reg_write(REGS[30], RETURN)
     cpu.reg_write(REGS[31], RAM)
+    cpu.reg_write(arm.UC_ARM64_REG_Q1, 0x12340000000000003ff8000000000000)
+    cpu.reg_write(arm.UC_ARM64_REG_Q2, 0x56780000000000004002000000000000)
     cpu.emu_start(BASE, RETURN, count=64)
     if cpu.reg_read(arm.UC_ARM64_REG_PC) != RETURN:
         raise RuntimeError("guest did not return")
     regs = [cpu.reg_read(reg) for reg in REGS]
     flags = cpu.reg_read(arm.UC_ARM64_REG_NZCV) >> 28
-    return regs, flags, bytes(cpu.mem_read(RAM - 16, 48))
+    vectors = [cpu.reg_read(getattr(arm, f'UC_ARM64_REG_Q{i}')) for i in range(4)]
+    return regs, flags, vectors, bytes(cpu.mem_read(RAM - 16, 48))
 
 
 def check(code, initial):
-    regs, flags, memory = oracle(code, initial)
+    regs, flags, vectors, memory = oracle(code, initial)
     regs = ", ".join(f"{value}ULL" for value in regs)
     memory = ", ".join(map(str, memory))
+    checks = '\n'.join(f'    if (s.q[{i}][0] != {q & ((1 << 64)-1)}ULL || s.q[{i}][1] != {q >> 64}ULL) return 5;' for i, q in enumerate(vectors))
     return f"""
     {{
         A64State s;
         std::array<std::uint8_t, 48> ram{{}};
         s.memory = ram;
         s.memory_base = {RAM - 16};
+        s.q[1] = {{0x3ff8000000000000ULL, 0x1234000000000000ULL}};
+        s.q[2] = {{0x4002000000000000ULL, 0x5678000000000000ULL}};
         s.x[0] = {initial}ULL;
         s.x[1] = {RAM + 16};
         s.x[30] = {RETURN};
@@ -49,18 +54,10 @@ def check(code, initial):
         if (run_a64(s, 64, {RETURN}) != Status::returned) return 1;
         if (s.x != std::array<std::uint64_t, 32>{{{regs}}}) return 2;
         if ((8 * s.n + 4 * s.z + 2 * s.c + s.v) != {flags}) return 3;
+{checks}
         if (ram != std::array<std::uint8_t, 48>{{{memory}}}) return 4;
     }}
 """
-
-
-def code_target(code):
-    from capstone import Cs, CS_ARCH_ARM64, CS_MODE_ARM
-    decoder = Cs(CS_ARCH_ARM64, CS_MODE_ARM)
-    for instruction in decoder.disasm(code, 0):
-        if instruction.mnemonic == "adr":
-            return int(instruction.op_str.split("#", 1)[1], 0)
-    raise ValueError("test fixture has no indirect target")
 
 
 def main():
@@ -82,7 +79,7 @@ def main():
         run("clang" + suffix, "--target=aarch64-none-elf", "-c", str(ROOT / "tests/tests_a64.S"), "-o", str(obj))
         run("llvm-objcopy" + suffix, "-O", "binary", "--only-section=.text", str(obj), str(binary))
         run(sys.executable, str(ROOT / "a64_compile.py"), str(binary), str(cpp), "--base", hex(BASE),
-            "--entry", hex(BASE), "--target", hex(BASE + code_target(binary.read_bytes())))
+            "--entry", hex(BASE))
         cases = (0, 1, 2, 0x80000000, 0x100000103, 0xffffffffffffffff)
         code = binary.read_bytes()
         harness = temp / "oracle.cpp"
@@ -93,6 +90,14 @@ def main():
             run("clang++" + suffix, "-std=c++20", "-O2", "-Wall", "-Wextra", "-Werror",
                 "-I", str(ROOT), str(cpp), str(source), "-o", str(executable))
             run(str(executable))
+        run("clang" + suffix, "--target=aarch64-none-elf", "-c", str(ROOT / "tests/host_abi.S"), "-o", str(obj))
+        run("llvm-objcopy" + suffix, "-O", "binary", "--only-section=.text", str(obj), str(binary))
+        bridge = temp / "bridge.cpp"
+        run(sys.executable, str(ROOT / "a64_compile.py"), str(binary), str(bridge))
+        executable = temp / ("host_abi" + suffix)
+        run("clang++" + suffix, "-std=c++20", "-O2", "-Wall", "-Wextra", "-Werror",
+            "-I", str(ROOT), str(bridge), str(ROOT / "tests/host_abi.cpp"), "-o", str(executable))
+        run(str(executable))
         print(f"{len(cases)} Unicorn comparisons passed (registers, flags and memory); fault tests passed")
 
 

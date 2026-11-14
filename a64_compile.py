@@ -70,6 +70,10 @@ MEMORY = {
 
 def lower(op, text):
     tokens = text.split(", ") if text else []
+    if op in ("eor", "and", "orr") and len(tokens) == 3 and all(
+        re.fullmatch(r"v(?:[0-9]|[12][0-9]|3[01])\.16b", token) for token in tokens
+    ):
+        return tuple(int(token[1:].split(".")[0]) for token in tokens)
     if op in ARITHMETIC | LOGICAL:
         compare = op in ("cmp", "cmn", "tst")
         if len(tokens) == (2 if compare else 3):
@@ -85,6 +89,11 @@ def lower(op, text):
         regs = tuple(map(register, tokens))
         if all(reg.width == regs[0].width for reg in regs):
             return regs
+    elif op in ("fadd", "fsub", "fmul", "fdiv") and len(tokens) == 3:
+        if all(re.fullmatch(r"[sd](?:[0-9]|[12][0-9]|3[01])", token) for token in tokens) and all(
+            token[0] == tokens[0][0] for token in tokens
+        ):
+            return (32 if tokens[0][0] == "s" else 64, *(int(token[1:]) for token in tokens))
     elif op == "mov" and len(tokens) == 2:
         dest, src = register(tokens[0]), value(tokens[1])
         if not isinstance(src, Reg) or src.width == dest.width:
@@ -188,7 +197,7 @@ def decode(code, base=0, reachable=False, stop_calls=False, host_fill=None, sele
             if ins.op == "bl" and stop_calls:
                 if ins.args[0] < base or ins.args[0] >= base + len(code) or ins.args[0] % 4:
                     raise ValueError(f"{ins.pc:#x}: invalid call target")
-            elif ins.args[-1] not in addresses and not (stop_calls and ins.op != "b"):
+            elif ins.args[-1] not in addresses and not (stop_calls and ins.op != "b") and not (selected is not None and ins.op == "bl"):
                 raise ValueError(f"{ins.pc:#x}: branch target outside input")
     return result
 
@@ -219,7 +228,20 @@ def emit(ins, last, addresses, stop_calls, host_fill):
             return f"goto L{target:x};"
         return f"{{ s.stop_target = {literal(target)}; return Status::external_branch; }}"
 
-    if op in ARITHMETIC | LOGICAL:
+    if op in ("fadd", "fsub", "fmul", "fdiv"):
+        width, dest, lhs, rhs = args
+        typ = "float" if width == 32 else "double"
+        bits = f"std::uint{width}_t"
+        operator = {"fadd": "+", "fsub": "-", "fmul": "*", "fdiv": "/"}[op]
+        out.append(f"const auto a = std::bit_cast<{typ}>({bits}(s.q[{lhs}][0]));")
+        out.append(f"const auto b = std::bit_cast<{typ}>({bits}(s.q[{rhs}][0]));")
+        out.append(f"s.q[{dest}] = {{std::bit_cast<{bits}>(a {operator} b), 0}};")
+    elif op in ("eor", "and", "orr") and isinstance(args[0], int):
+        dest, lhs, rhs = args
+        operator = {"eor": "^", "and": "&", "orr": "|"}[op]
+        for lane in range(2):
+            out.append(f"s.q[{dest}][{lane}] = s.q[{lhs}][{lane}] {operator} s.q[{rhs}][{lane}];")
+    elif op in ARITHMETIC | LOGICAL:
         dest, lhs, rhs = args
         width = dest.width
         operator = ("+" if op in ("add", "adds", "cmn") else "-" if op in ("sub", "subs", "cmp")
@@ -303,12 +325,15 @@ def emit(ins, last, addresses, stop_calls, host_fill):
             return [link, "if (!s.fill(s.x[0], s.x[1], s.x[2])) return Status::memory_fault;"]
         if stop_calls:
             return [link, f"s.stop_target = {literal(args[0])};", "return Status::external_branch;"]
-        return [link, jump(args[0])]
+        return [link, jump(args[0])] if args[0] in addresses else [link, f"if (!s.invoke_host({literal(args[0])})) {jump(args[0])}"]
     elif op in ("ret", "br", "blr"):
         out = [f"target = {read(args[0])};"]
         if op == "blr":
             out.append(f"s.x[30] = {literal(ins.pc + 4)};")
-        return out + ["goto indirect;"]
+        if op == "blr":
+            out.append("if (!s.invoke_host(target)) goto indirect;")
+        else:
+            return out + ["goto indirect;"]
     elif op.startswith("b."):
         expr = re.sub(r"\b[nzcv]\b", lambda m: "s." + m[0], CONDITIONS[op[2:]])
         out.append(f"if ({expr}) {jump(args[0])}")

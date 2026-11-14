@@ -10,10 +10,26 @@ enum class Status { returned, fell_through, memory_fault, bad_return, budget_exh
 struct A64State {
     static constexpr std::uint64_t return_to_host = UINT64_MAX;
     std::array<std::uint64_t, 32> x{};  // Slot 31 is SP. XZR is handled by the compiler.
+    std::array<std::array<std::uint64_t, 2>, 32> q{};
     bool n{}, z{}, c{}, v{};
     std::uint64_t pc{}, stop_target{};
     std::uint64_t memory_base{};
     std::span<std::uint8_t> memory;
+
+    // Registered guest addresses are data. Never cast a guest value to a host function pointer.
+    using HostRoutine = std::uint64_t (*)(std::uint64_t, std::uint64_t, std::uint64_t, std::uint64_t);
+    struct HostBinding { std::uint64_t guest; HostRoutine routine; };
+    std::span<const HostBinding> bindings;
+
+    bool invoke_host(std::uint64_t target) {
+        for (const auto& binding : bindings) {
+            if (binding.guest == target && binding.routine) {
+                x[0] = binding.routine(x[0], x[1], x[2], x[3]);
+                return true;
+            }
+        }
+        return false;
+    }
 
     A64State() { x[30] = return_to_host; }
 

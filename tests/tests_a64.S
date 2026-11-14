@@ -13,6 +13,8 @@ zero:
     mov w0, #42
     ret
 nested:
+    fadd d0, d1, d2
+    eor v3.16b, v1.16b, v2.16b
     mov w9, #0x1234
     movk w9, #0xabcd, lsl #16
     lsl w10, w9, #1

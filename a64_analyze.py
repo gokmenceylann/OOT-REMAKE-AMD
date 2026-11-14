@@ -10,12 +10,19 @@ def analyze(code, entries, base):
     decoder.detail = True
     results = {}
     pending = set(entries)
+
+    def decode_at(pc):
+        offset = pc - base
+        if offset < 0 or offset % 4 or offset + 4 > len(code):
+            return None
+        return next(decoder.disasm(code[offset:offset + 4], pc), None)
     while pending:
         entry = min(pending)
         pending.remove(entry)
         if entry in results:
             continue
         blocks, calls, indirect, exits = set(), set(), set(), set()
+        candidates = {}
         todo = [entry]
         while todo:
             pc = todo.pop()
@@ -35,6 +42,17 @@ def analyze(code, entries, base):
                 continue
             if op.startswith(("br", "blr")):
                 indirect.add(pc)
+                previous = decode_at(pc - 4)
+                if (op in ("br", "blr") and previous and previous.mnemonic == "adr"
+                        and previous.operands[0].reg == ins.operands[0].reg):
+                    target = previous.operands[1].imm
+                    if decode_at(target) is not None:
+                        candidates[pc] = target
+                        if op == "blr":
+                            calls.add(target)
+                            pending.add(target)
+                        else:
+                            todo.append(target)
                 if op.startswith("blr"):
                     todo.append(pc + 4)
                 continue
@@ -52,7 +70,7 @@ def analyze(code, entries, base):
                     continue
             todo.append(pc + 4)
         results[entry] = dict(instructions=sorted(blocks), calls=sorted(calls),
-                              indirect_sites=sorted(indirect), exits=sorted(exits))
+                              indirect_sites=sorted(indirect), indirect_candidates=candidates, exits=sorted(exits))
     return results
 
 if __name__ == "__main__":
