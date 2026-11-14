@@ -3,7 +3,8 @@
 Mako, Hookshot'ın AArch64 dönüştürme ve derleme altyapısını, Horizon host uygulamalarını, NVN2 ve Vulkan çizicisini, ayrıca Mako'nun AMD değişikliklerini birlikte taşır. Kaynak bağımlılığı `bef2014454a9a3e669c77cb4e6cfb4b04f362f3a` commit'ine sabitlendi. Doğrudan derlenen oyun EXE'si kullanılır.
 
 ~~~powershell
-git submodule update --init
+git clone --recurse-submodules https://github.com/gokmenceylann/OOT-REMAKE-AMD.git
+cd OOT-REMAKE-AMD
 & 'C:\Tools\Python\python.exe' -m pip install -r upstream/mako/requirements.txt
 
 .\scripts\Build-LocalGame.ps1 `

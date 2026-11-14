@@ -9,3 +9,9 @@ The SDK enumerates providers using the real Vulkan device and pins the exact 4.1
 The log distinguishes provider enumeration, context creation, and successful dispatch. Only `FSR provider dispatched` confirms a successful ML dispatch. When unavailable, the existing FSR 3.1 path is selected, with the game's scaler remaining available when that path cannot run. `RX_VK_FSR4=0` and `RX_VK_FSR=1` can exercise the built-in FSR 3.1 path.
 
 [AMD SDK 2.4.0 integration and provider versioning](https://gpuopen.com/learn/amd-fsr-sdk-2-4-rx-6000-ryzen-apus/)
+
+## Türkçe
+
+Yerel derlemede `-EnableFsr412` kullan. AMD’nin yukarıda bağlantısı verilen FSR SDK 2.4.0 paketinden imzalı Vulkan loader ve upscaler DLL’lerini edin. SDK lisansını koru. DLL’leri `hookshot.exe` yanına koy veya `RX_VK_FSR_DIR` ile dizini belirt.
+
+Graphics menüsünden AMD FSR 4 ve çözünürlük modunu seç. FSR ölçekleme mevcut oyun karesini yeniden oluşturur. Frame Generation ek kare üretir ve ayrı bir ayardır. Logdaki `FSR provider dispatched: 4.1.2` satırı başarılı ML dispatch’i doğrular. `upscalers … using 4.1.2` yalnızca seçim kaydıdır. Context hatasında FSR 3.1 fallback ve [context tanılama rehberine](fsr-context-recovery.md) bak.

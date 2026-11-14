@@ -30,3 +30,5 @@ image.bin
 hookshot_*.bin
 hookshot_*.bin.*
 hookshot_*.idx
+
+/dist/

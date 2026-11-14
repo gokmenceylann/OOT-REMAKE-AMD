@@ -1,0 +1,65 @@
+name: Windows tools release
+on:
+  pull_request:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          submodules: true
+          persist-credentials: false
+      - name: Install Inno Setup
+        shell: pwsh
+        run: choco install innosetup --yes --no-progress
+      - name: Package and verify
+        shell: pwsh
+        run: |
+          $version = if ($env:GITHUB_REF_TYPE -eq 'tag') { $env:GITHUB_REF_NAME } else { 'v0.0.0' }
+          $compiler = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6/ISCC.exe'
+          ./scripts/New-ReleasePackage.ps1 -Version $version -OutputDirectory dist -InnoCompiler $compiler
+          ./scripts/Test-ReleasePackage.ps1 -PackageDirectory dist
+      - name: Exercise install and uninstall
+        shell: pwsh
+        run: |
+          $target = Join-Path $env:RUNNER_TEMP 'oot-tools-smoke'
+          $installer = (Get-Item dist/*-setup.exe).FullName
+          $process = Start-Process $installer -Wait -PassThru -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/DIR=""$target"""
+          if ($process.ExitCode -or !(Test-Path "$target/docs/install.md")) { throw 'Install failed.' }
+          New-Item -ItemType Directory "$target/user/save" | Out-Null
+          Set-Content "$target/user/save/sentinel" 'save'
+          Set-Content "$target/hookshot_options.ini" 'settings'
+          $process = Start-Process "$target/unins000.exe" -Wait -PassThru -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART'
+          if ($process.ExitCode -or (Test-Path "$target/docs/install.md") -or
+              (Get-Content "$target/user/save/sentinel") -ne 'save' -or
+              (Get-Content "$target/hookshot_options.ini") -ne 'settings') { throw 'Uninstall preservation failed.' }
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: windows-tools
+          path: dist/
+          if-no-files-found: error
+
+  draft-release:
+    if: github.ref_type == 'tag'
+    needs: package
+    runs-on: windows-2022
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: windows-tools
+          path: dist
+      - name: Draft release with checksums
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $assets = @(Get-ChildItem dist -File | ForEach-Object FullName)
+          gh release create $env:GITHUB_REF_NAME @assets --repo $env:GITHUB_REPOSITORY --verify-tag --draft --generate-notes

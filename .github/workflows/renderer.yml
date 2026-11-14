@@ -1,0 +1,62 @@
+name: Windows Vulkan renderer
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  renderer:
+    runs-on: windows-2022
+    timeout-minutes: 45
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          submodules: true
+      # (the headers in the CPM cache layout nx2/build.py reads, at the versions scripts/linux/deps.sh pins)
+      - name: Check out pinned Vulkan headers
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: KhronosGroup/Vulkan-Headers
+          ref: 74d8a6cb930c68ef617b202c3ff3c59d919e086b # v1.4.345
+          path: _deps/cpm/vulkanheaders/v1.4.345
+          persist-credentials: false
+      - name: Check out pinned SPIR-V headers
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: KhronosGroup/SPIRV-Headers
+          ref: 04f10f650d514df88b76d25e83db360142c7b174 # vulkan-sdk-1.4.341.0
+          path: _deps/cpm/spirv-headers/vulkan-sdk-1.4.341.0
+          persist-credentials: false
+      - name: Check out pinned VulkanMemoryAllocator
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator
+          ref: 1d8f600fd424278486eade7ed3e877c99f0846b1 # v3.3.0
+          path: _deps/cpm/vulkanmemoryallocator/v3.3.0
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
+        with:
+          python-version: '3.12'
+      - name: Apply renderer patches
+        shell: pwsh
+        run: |
+          git -C upstream/mako apply --ignore-whitespace ../../patches/fsr-4.1.2.patch ../../patches/rx6700m-memory.patch
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Compile and link
+        shell: pwsh
+        working-directory: upstream/mako
+        env:
+          RX_VK_ONLY: '1'
+          HOOKSHOT_FSR: '1'
+        run: |
+          $env:HOOKSHOT_MINGW = python -I scripts/release_parts.py llvm-mingw "$env:RUNNER_TEMP/llvm"
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          $env:OOT_WORK = "$env:RUNNER_TEMP/oot-vk"
+          $env:RX_CPM = "$env:GITHUB_WORKSPACE/_deps/cpm"
+          python -I nx2/build.py --standalone --jobs 4
+          if ($LASTEXITCODE -or !(Test-Path "$env:OOT_WORK/sa/build/hookshot_vk.dll")) { throw 'Renderer build failed.' }
