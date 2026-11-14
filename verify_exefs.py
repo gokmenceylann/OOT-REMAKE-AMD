@@ -8,7 +8,8 @@ import sys
 from inspect_exefs import inspect_module, MODULES
 
 
-def verify_module(path: Path) -> dict:
+def read_module(path: Path) -> tuple[dict, dict[str, bytes], int]:
+    contents = {}
     info = inspect_module(path)
     flags = int(info["flags"], 16)
     if flags & 0x80:
@@ -39,6 +40,12 @@ def verify_module(path: Path) -> dict:
                 segment["hash_status"] = "verified"
             else:
                 segment["hash_status"] = "not provided"
+            contents[name] = payload
+    return info, contents, int.from_bytes(header[0x3C:0x40], "little")
+
+
+def verify_module(path: Path) -> dict:
+    info, _, _ = read_module(path)
     return info
 
 

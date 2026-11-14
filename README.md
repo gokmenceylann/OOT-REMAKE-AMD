@@ -16,3 +16,11 @@ python -m pip install -r requirements.txt
 python verify_exefs.py 'C:\Games\OOT\exefs'
 python -m unittest -v
 ```
+
+## Modül eşleme
+
+```powershell
+python map_exefs.py 'C:\Games\OOT\exefs'
+```
+
+Araç doğrulanmış NSO segmentlerini ve sıfır dolgulu BSS'yi belleğe eşler. Sembol gerektirmeyen AArch64 RELA ve sıkıştırılmış RELR relocation kayıtlarını uygular. ABS64, GLOB_DAT ve JUMP_SLOT girdilerini ayrı sayar. Kaynak dosyalara yazmaz ve eşlenen görüntüyü dışarı aktarmaz. Bu komut bir modül denetimidir. Oyun yürütme ortamı henüz yoktur.
