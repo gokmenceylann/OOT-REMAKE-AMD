@@ -1,0 +1,226 @@
+diff --git a/gpu/vk/vk_fsr3.cpp b/gpu/vk/vk_fsr3.cpp
+index 77e5a80..47d3f88 100644
+--- a/gpu/vk/vk_fsr3.cpp
++++ b/gpu/vk/vk_fsr3.cpp
+@@ -21,6 +21,7 @@
+ #include "vk_draw.h"      // (descriptors_disturbed)
+ #include "vk_gprof.h"     // (RX_VK_PASS_TIMING: a span per pass, so the report names them)
+ #include "vk_menu.h"
++#include "vk_fsr4.h"
+ #include "vk_temporal.h"   // (temporal_env_chosen: RX_VK_DLSS / RX_VK_FSR4 over the row's FSR 3.1)
+ #include "vk_texture.h"
+ #include "upscaler_rows.h"
+@@ -751,6 +752,14 @@ bool fsr3_wanted() {
+     if (env == 0) return false;
+     // (the Upscaler row's FSR 3.1, upscaler_rows.h, read each time: the row changes it while the game runs. RX_VK_DLSS=1 / 2
+     // or RX_VK_FSR4=1 / 2 goes over the row, its FSR 3.1 too: vk_temporal.cpp's chain draws then)
++    static const int ml = env_switch("RX_VK_FSR4");
++    const bool ml_requested = ml > 0 || upscaler_rows::is_fsr4(opts.dlss);
++    if (ml_requested) fsr4_probe();
++    if (ml_requested && fsr4_why() != FSR_OK && !temporal_env_chosen() && fsr3::supported()) {
++        static const bool logged = [] { logf("vk: FSR 3.1 fallback selected; requested ML provider unavailable"); return true; }();
++        (void)logged;
++        return true;
++    }
+     return (env > 0 || (opts.dlss == upscaler_rows::FSR3 && !temporal_env_chosen())) && fsr3::supported();
+ }
+ 
+diff --git a/gpu/vk/vk_fsr4.cpp b/gpu/vk/vk_fsr4.cpp
+index 2a34a9c..6108fe3 100644
+--- a/gpu/vk/vk_fsr4.cpp
++++ b/gpu/vk/vk_fsr4.cpp
+@@ -55,6 +55,8 @@ int env_switch(const char* name) {   // (-1: unset)
+ std::atomic<int> g_why{-1};
+ }  // namespace
+ 
++void fsr4_failed() { g_why = FSR_RUNTIME_FAILURE; }
++
+ FsrWhy fsr4_why() {
+     if (!fsr4_built()) return FSR_NOT_BUILT;
+     static const bool env_off = env_switch("RX_VK_FSR4") == 0;
+@@ -99,6 +101,9 @@ Library& lib() {
+ struct Context {
+     ffxCreateBackendVKDesc backend{};
+     ffxOverrideVersion version{};
++    ffxCreateContextDescUpscaleVersion api{};
++    std::string provider;
++    bool dispatched = false;
+ #ifndef _WIN32
+     ffxCreateBackendVKDesc_DEPRECATED legacy_backend{};   // (linux) the backend description a Vulkan FSR 4 build like fsr4-vk reads
+ #endif
+@@ -203,6 +208,10 @@ bool load() {
+         return no(FSR_NO_LIBRARY);
+     }
+     l.device_context = VkDeviceContext{dev.device, dev.physical, vkGetDeviceProcAddr};
++    logf("vk: FSR SDK probe: %s vendor=%04x device=%04x driver=%#x Vulkan %u.%u.%u INT8=%u dot=%u",
++         dev.props.deviceName, dev.props.vendorID, dev.props.deviceID, dev.props.driverVersion,
++         VK_API_VERSION_MAJOR(dev.props.apiVersion), VK_API_VERSION_MINOR(dev.props.apiVersion),
++         VK_API_VERSION_PATCH(dev.props.apiVersion), dev.vk12.shaderInt8, dev.vk13.shaderIntegerDotProduct);
+     // (the library lists every upscaler this device can run: the newest 4.x is taken explicitly, so an FSR 3.1 provider never
+     // stands in silently)
+     ffxQueryDescGetVersions versions{};
+@@ -229,7 +238,11 @@ bool load() {
+         const char* name = names[i] ? names[i] : "";
+         listed += (listed.empty() ? "" : ", ") + std::string(name);
+         unsigned v[3] = {0, 0, 0};
+-        sscanf(name, "%u.%u.%u", &v[0], &v[1], &v[2]);
++        if (sscanf(name, "FSR %u.%u.%u", &v[0], &v[1], &v[2]) != 3 &&
++            sscanf(name, "%u.%u.%u", &v[0], &v[1], &v[2]) != 3) continue;
++#ifdef _WIN32
++        if (v[0] != 4 || v[1] != 1 || v[2] != 2) continue;
++#endif
+         // (the first of equal versions: a Vulkan FSR 4 build lists its Auto, which picks the GPU's model, before INT8 and FP8)
+         if (v[0] == 4 && (!l.version_id || v[1] > best[1] || (v[1] == best[1] && v[2] > best[2]))) {
+             std::memcpy(best, v, sizeof best);
+@@ -266,7 +279,10 @@ std::shared_ptr<Context> make_context(uint32_t w, uint32_t h) {
+     c->version.header.pNext = &c->legacy_backend.header;
+ #endif
+     c->upscale.header.type = FFX_API_CREATE_CONTEXT_DESC_TYPE_UPSCALE;
+-    c->upscale.header.pNext = &c->backend.header;
++    c->api.header.type = FFX_API_CREATE_CONTEXT_DESC_TYPE_UPSCALE_VERSION;
++    c->api.version = FFX_UPSCALER_VERSION;
++    c->api.header.pNext = &c->backend.header;
++    c->upscale.header.pNext = &c->api.header;
+     // (the chain's colour is tonemapped and square-root encoded already: LDR, perceptual, no auto exposure; depth not
+     // inverted. The render size changes under the one context)
+     c->upscale.flags = FFX_UPSCALE_ENABLE_NON_LINEAR_COLORSPACE | FFX_UPSCALE_ENABLE_DYNAMIC_RESOLUTION;
+@@ -290,7 +306,25 @@ std::shared_ptr<Context> make_context(uint32_t w, uint32_t h) {
+     ffxQueryGetProviderVersion provider{};
+     provider.header.type = FFX_API_QUERY_DESC_TYPE_GET_PROVIDER_VERSION;
+     const bool known = l.query(&c->context, &provider.header) == FFX_API_RETURN_OK && provider.versionName;
+-    logf("vk: AMD FSR 4: FSR %s made for outputs of %ux%u (frame %llu, %.1f ms of CPU; its own %llu MB)",
++#ifdef _WIN32
++    if (!known || provider.versionId != l.version_id) {
++        logf("vk: FSR candidate rejected: selected provider could not be confirmed");
++        return nullptr;
++    }
++#endif
++#ifdef _WIN32
++    ffxQueryDescUpscaleGetResourceRequirements resources{};
++    resources.header.type = FFX_API_QUERY_DESC_TYPE_UPSCALE_GET_RESOURCE_REQUIREMENTS;
++    if (l.query(&c->context, &resources.header) != FFX_API_RETURN_OK ||
++        (resources.required_resources & ~(FFX_API_QUERY_RESOURCE_INPUT_COLOR | FFX_API_QUERY_RESOURCE_INPUT_DEPTH |
++            FFX_API_QUERY_RESOURCE_INPUT_MV | FFX_API_QUERY_RESOURCE_INPUT_EXPOSURE))) {
++        logf("vk: FSR candidate rejected: required input mask %#llx could not be satisfied",
++             (unsigned long long)resources.required_resources);
++        return nullptr;
++    }
++#endif
++    c->provider = known ? provider.versionName : "unknown";
++    logf("vk: AMD FSR 4: candidate %s made for outputs of %ux%u (frame %llu, %.1f ms of CPU; its own %llu MB)",
+          known ? provider.versionName : "?", w, h, (unsigned long long)texture_frame_no(), made_ms,
+          (unsigned long long)(c->memory >> 20));
+     return c;
+@@ -318,8 +352,7 @@ void barriers(VkCommandBuffer cmd, const VkImageMemoryBarrier2* b, uint32_t n) {
+     vkCmdPipelineBarrier2(cmd, &di);
+ }
+ 
+-#ifndef _WIN32
+-/// (linux) a Vulkan FSR 4 build takes no frame without an exposure, and the chain's colour is tonemapped already: a 1x1 R32F of 1
++// The scene is already tonemapped, so its exposure is unity. Reuse one texel across contexts.
+ bool unit_exposure(VkCommandBuffer cmd, TemporalImage& out) {
+     static VkImage image = VK_NULL_HANDLE;
+     static VmaAllocation allocation{};
+@@ -345,7 +378,6 @@ bool unit_exposure(VkCommandBuffer cmd, TemporalImage& out) {
+     }
+     return true;
+ }
+-#endif
+ 
+ // ---- the engine (vk_temporal.h TemporalEngine) ----
+ 
+@@ -379,10 +411,8 @@ int prepare(VkCommandBuffer, uint32_t rw, uint32_t rh, uint32_t ow, uint32_t oh,
+ bool evaluate(VkCommandBuffer cmd, const TemporalFrame& f) {
+     State& s = st();
+     Library& l = lib();
+-#ifndef _WIN32
+     TemporalImage exposure{};
+     if (!unit_exposure(cmd, exposure)) return false;
+-#endif
+     const auto now = std::chrono::steady_clock::now();
+     const float frame_ms = s.evals ? std::chrono::duration<float, std::milli>(now - s.last).count() : 1000.0f / 30.0f;
+     s.last = now;
+@@ -402,9 +432,7 @@ bool evaluate(VkCommandBuffer cmd, const TemporalFrame& f) {
+     d.depth = resource(f.depth, VK_IMAGE_USAGE_SAMPLED_BIT, FFX_API_RESOURCE_STATE_COMPUTE_READ);
+     d.motionVectors = resource(f.motion, VK_IMAGE_USAGE_SAMPLED_BIT, FFX_API_RESOURCE_STATE_COMPUTE_READ);
+     d.output = resource(f.output, VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, FFX_API_RESOURCE_STATE_UNORDERED_ACCESS);
+-#ifndef _WIN32
+-    d.exposure = resource(exposure, VK_IMAGE_USAGE_SAMPLED_BIT, FFX_API_RESOURCE_STATE_COMPUTE_READ);
+-#endif
++    d.exposure = resource(exposure, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, FFX_API_RESOURCE_STATE_COMPUTE_READ);
+     d.jitterOffset = {f.jitter[0], f.jitter[1]};   // (render pixels, as the projection was offset: the same as DLSS's)
+     d.motionVectorScale = {1.0f, 1.0f};             // (render pixels already, towards the frame before)
+     d.renderSize = {f.render_w, f.render_h};
+@@ -430,6 +458,12 @@ bool evaluate(VkCommandBuffer cmd, const TemporalFrame& f) {
+         logf("vk: AMD FSR 4: its dispatch failed (%d)", (int)r);
+         return false;
+     }
++    if (!s.context->dispatched) {
++        s.context->dispatched = true;
++        logf("vk: FSR provider dispatched: %s (id=%llu) on %s, %ux%u -> %ux%u",
++             s.context->provider.c_str(), (unsigned long long)l.version_id, dev.props.deviceName,
++             f.render_w, f.render_h, f.output.width, f.output.height);
++    }
+     // (the first evaluation, and the first resets: a camera cut each)
+     if (s.evals++ == 0 || (f.reset && s.told_resets < 40))
+         s.told_resets++, logf("vk: AMD FSR 4: %ux%u -> %ux%u, jitter %+.3f %+.3f px%s", f.render_w, f.render_h, f.output.width,
+diff --git a/gpu/vk/vk_fsr4.h b/gpu/vk/vk_fsr4.h
+index 6e10a95..26420fb 100644
+--- a/gpu/vk/vk_fsr4.h
++++ b/gpu/vk/vk_fsr4.h
+@@ -12,11 +12,12 @@ struct TemporalEngine;
+ /// Whether this build has FSR in it (HOOKSHOT_FSR)
+ bool fsr4_built();
+ /// Why FSR 4 cannot be chosen here (the Upscaler row says it), FSR_OK when it can or is not known yet
+-enum FsrWhy { FSR_OK, FSR_NOT_BUILT, FSR_ENV_OFF, FSR_NO_LIBRARY, FSR_NO_MODEL, FSR_WHY_COUNT };
++enum FsrWhy { FSR_OK, FSR_NOT_BUILT, FSR_ENV_OFF, FSR_NO_LIBRARY, FSR_NO_MODEL, FSR_RUNTIME_FAILURE, FSR_WHY_COUNT };
+ FsrWhy fsr4_why();
+ /// Loads AMD's library once and asks it for an FSR 4 upscaler for this device, so fsr4_why knows before the first upscale
+ /// (the menu, when it opens). Nothing in a build without FSR, or before the device is made
+ void fsr4_probe();
++void fsr4_failed();
+ /// (linux) a Vulkan FSR 4 library is there and records with descriptor buffers: the device has to enable them
+ bool fsr4_wants_descriptor_buffer();
+ /// FSR 4 as the temporal upscaler's engine (FSR 4 and its native AA on the Upscaler row); nullptr in a build without it
+diff --git a/gpu/vk/vk_menu.cpp b/gpu/vk/vk_menu.cpp
+index 3985f3e..ee9b2d4 100644
+--- a/gpu/vk/vk_menu.cpp
++++ b/gpu/vk/vk_menu.cpp
+@@ -229,7 +229,8 @@ const char* hn_upscaler(int v, int variant) {
+     v = std::clamp(v, 0, ur::kUpscalers - 1);
+     // (the reasons are said only where the engine is in the build: one without FSR does not tell an NVIDIA user why)
+     const char* dn = dlss_built() || variant >= 0 ? dlss_no[d] : nullptr;
+-    const char* fn = fsr4_built() || variant >= 0 ? fsr_no[f] : nullptr;
++    const char* fn = f == FSR_RUNTIME_FAILURE ? "AMD FSR 4 failed; see the renderer log."
++        : fsr4_built() || variant >= 0 ? fsr_no[f] : nullptr;
+     if (v != ur::GAME || (!dn && !fn)) return t[v];
+     static char b[DLSS_WHY_COUNT][FSR_WHY_COUNT][320];
+     snprintf(b[d][f], sizeof b[d][f], "%s%s%s%s%s", t[0], dn ? " " : "", dn ? dn : "", fn ? " " : "", fn ? fn : "");
+diff --git a/gpu/vk/vk_temporal.cpp b/gpu/vk/vk_temporal.cpp
+index fe8fa60..ab80bbe 100644
+--- a/gpu/vk/vk_temporal.cpp
++++ b/gpu/vk/vk_temporal.cpp
+@@ -873,6 +873,7 @@ bool temporal_upscale(VkCommandBuffer cmd, uint64_t key, bool known, Texture* in
+     }
+     if (!make_pipelines()) {
+         engine.failed = true;
++        if (ur::is_fsr4(mode)) fsr4_failed();
+         return fail("its shaders were not made");
+     }
+     const VkImageView dview = depth_view(cam.depth);
+@@ -900,6 +901,7 @@ bool temporal_upscale(VkCommandBuffer cmd, uint64_t key, bool known, Texture* in
+     const int ready = engine.e->prepare(cmd, rw, rh, dw, dh, &iw, &ih, &why);
+     if (ready < 0) {
+         engine.failed = true;
++        if (ur::is_fsr4(mode)) fsr4_failed();
+         return fail(why ? why : "it could not be made");
+     }
+     if (ready == 0) return fail(why ? why : "not this frame");
+@@ -974,6 +976,7 @@ bool temporal_upscale(VkCommandBuffer cmd, uint64_t key, bool known, Texture* in
+     if (!engine.e->evaluate(cmd, f)) {
+         logf("vk: %s: its evaluation failed: the game's upscale from now on", engine.e->name);
+         engine.failed = true;
++        if (ur::is_fsr4(mode)) fsr4_failed();
+         return false;   // (the network writes its output over whatever the evaluation did)
+     }
+     full_barrier(cmd);
