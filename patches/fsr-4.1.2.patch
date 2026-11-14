@@ -611,10 +611,18 @@ index 3985f3e..15ac8aa 100644
  /// Frame generation: how many frames are made for each of the game's
  const char* hn_framegen(int v, int variant) {
 diff --git a/gpu/vk/vk_temporal.cpp b/gpu/vk/vk_temporal.cpp
-index fe8fa60..f08ce28 100644
+index fe8fa60..8fc6c24 100644
 --- a/gpu/vk/vk_temporal.cpp
 +++ b/gpu/vk/vk_temporal.cpp
-@@ -197,7 +197,8 @@ struct State {
+@@ -36,6 +36,7 @@
+ // in it); =alternate: every other frame the game's own upscale (a test's reference beside the engine's). (The names are
+ // DLSS's from before FSR came: they apply to either engine.)
+ #include "vk_temporal.h"
++#include "vk_gprof.h"
+ 
+ #include <algorithm>
+ #include <atomic>
+@@ -197,7 +198,8 @@ struct State {
      uint64_t engines_made = 0;  // (prepare's new histories: a feature or context made again, each a stall in play)
      float status_jitter[2]{};   // (the last evaluation's jitter, in render pixels, and whether it had motion)
      bool status_motion = false;
@@ -624,7 +632,7 @@ index fe8fa60..f08ce28 100644
      std::vector<Dead> dead;   // (what work in flight may still use: freed a few frames on)
      uint64_t asked = 0;       // (the frame an upscale last asked for an engine: temporal_idle)
      std::atomic<bool> holding{false};   // (an engine's state, images or frees still to do: temporal_idle has something to let go)
-@@ -242,12 +243,15 @@ bool fail(const char* why) {   // (the network runs: why, when it changes and ev
+@@ -242,12 +244,15 @@ bool fail(const char* why) {   // (the network runs: why, when it changes and ev
      return false;
  }
  
@@ -642,7 +650,7 @@ index fe8fa60..f08ce28 100644
              s.dead[i].free();
              s.dead[i] = std::move(s.dead.back());
              s.dead.pop_back();
-@@ -257,13 +261,15 @@ void free_dead(bool all) {
+@@ -257,13 +262,15 @@ void free_dead(bool all) {
      }
  }
  
@@ -661,7 +669,7 @@ index fe8fa60..f08ce28 100644
      im = {};
  }
  
-@@ -627,6 +633,11 @@ void drop_all() {
+@@ -627,6 +634,11 @@ void drop_all() {
  
  void temporal_later(std::function<void()> f) { later(std::move(f)); }
  
@@ -673,7 +681,7 @@ index fe8fa60..f08ce28 100644
  void temporal_note_scene_draw(const Texture* color0, uint32_t width, uint32_t height, Texture* depth, uint64_t camera,
                                uint64_t camera_size) {
      // (only a size the gameplay upscale's output can come from: 1 to 3 times smaller. A smaller target with a camera (the
-@@ -719,6 +730,7 @@ void temporal_idle() {
+@@ -719,6 +731,7 @@ void temporal_idle() {
      if (!s.holding.load(std::memory_order_relaxed)) return;
      std::lock_guard lk(s.mu);
      const uint64_t now = texture_frame_no();
@@ -681,7 +689,7 @@ index fe8fa60..f08ce28 100644
      if (now - s.asked <= 120) return;   // (in use, or off for under 120 frames (2 s): kept, a row stepped through comes back at once)
      // (hookshot, a stutter: kept too while DLSS or FSR 4 is still the Upscaler's choice. Each area change's loading screen has no
      // gameplay upscale for 2 s and more, and DLSS's feature let go then was made again at the next area's first frame: 44-78 ms
-@@ -733,6 +745,7 @@ void temporal_idle() {
+@@ -733,6 +746,7 @@ void temporal_idle() {
          s.drawing = nullptr;
      }
      drop_all();
@@ -689,7 +697,7 @@ index fe8fa60..f08ce28 100644
      s.last_frame = 0;   // (a new history when it comes back)
      free_dead(false);
      s.holding = !s.dead.empty();
-@@ -873,6 +886,7 @@ bool temporal_upscale(VkCommandBuffer cmd, uint64_t key, bool known, Texture* in
+@@ -873,6 +887,7 @@ bool temporal_upscale(VkCommandBuffer cmd, uint64_t key, bool known, Texture* in
      }
      if (!make_pipelines()) {
          engine.failed = true;
@@ -697,7 +705,7 @@ index fe8fa60..f08ce28 100644
          return fail("its shaders were not made");
      }
      const VkImageView dview = depth_view(cam.depth);
-@@ -897,9 +911,18 @@ bool temporal_upscale(VkCommandBuffer cmd, uint64_t key, bool known, Texture* in
+@@ -897,9 +912,18 @@ bool temporal_upscale(VkCommandBuffer cmd, uint64_t key, bool known, Texture* in
      } disturbed;
      uint32_t iw = rw, ih = rh;
      const char* why = nullptr;
@@ -716,7 +724,7 @@ index fe8fa60..f08ce28 100644
          return fail(why ? why : "it could not be made");
      }
      if (ready == 0) return fail(why ? why : "not this frame");
-@@ -926,7 +949,11 @@ bool temporal_upscale(VkCommandBuffer cmd, uint64_t key, bool known, Texture* in
+@@ -926,7 +950,11 @@ bool temporal_upscale(VkCommandBuffer cmd, uint64_t key, bool known, Texture* in
      float previous[16];
      std::memcpy(previous, s.last_vp, sizeof previous);
      dlss_math::unjitter(previous, s.last_jitter);
@@ -729,14 +737,41 @@ index fe8fa60..f08ce28 100644
      if (!motion) reset = true;   // (without a valid reprojection, prior history has no mapping to this camera)
      pc.jitter[0] = cam.jitter[0], pc.jitter[1] = cam.jitter[1];
      pc.size[0] = (int32_t)rw, pc.size[1] = (int32_t)rh, pc.flags = (motion ? 1 : 0) | (show_motion ? 2 : 0);
-@@ -974,6 +1001,7 @@ bool temporal_upscale(VkCommandBuffer cmd, uint64_t key, bool known, Texture* in
+@@ -948,6 +976,7 @@ bool temporal_upscale(VkCommandBuffer cmd, uint64_t key, bool known, Texture* in
+         vkCmdPushConstants(cmd, s.prep_layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof pc, &pc);
+         vkCmdDispatch(cmd, (rw + 7) / 8, (rh + 7) / 8, 1);
+     };
++    const bool timed_prep = fsr4 && gprof_begin(cmd);
+     full_barrier(cmd);   // (the scene's colour and depth, written before)
+     prep();
+     full_barrier(cmd);
+@@ -959,6 +988,7 @@ bool temporal_upscale(VkCommandBuffer cmd, uint64_t key, bool known, Texture* in
+         prep();
+         full_barrier(cmd);
+     }
++    if (timed_prep) gprof_end(cmd, "FSR 4 Mako inputs");
+     TemporalFrame f;
+     f.color = s.color.shown(), f.depth = s.depth.shown(), f.motion = s.motion.shown(), f.output = s.output.shown();
+     f.render_w = rw, f.render_h = rh;
+@@ -974,8 +1004,10 @@ bool temporal_upscale(VkCommandBuffer cmd, uint64_t key, bool known, Texture* in
      if (!engine.e->evaluate(cmd, f)) {
          logf("vk: %s: its evaluation failed: the game's upscale from now on", engine.e->name);
          engine.failed = true;
 +        if (ur::is_fsr4(mode)) fsr4_failed();
          return false;   // (the network writes its output over whatever the evaluation did)
      }
++    const bool timed_output = fsr4 && gprof_begin(cmd);
      full_barrier(cmd);
+     {
+         const int32_t opc[2] = {(int32_t)ow, (int32_t)oh};
+@@ -991,6 +1023,7 @@ bool temporal_upscale(VkCommandBuffer cmd, uint64_t key, bool known, Texture* in
+         vkCmdPushConstants(cmd, s.out_layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof opc, opc);
+         vkCmdDispatch(cmd, (ow + 7) / 8, (oh + 7) / 8, 1);
+     }
++    if (timed_output) gprof_end(cmd, "FSR 4 Mako output");
+     redstone_note_frame(f, out, ow, oh);   // (Mako: Redstone frame generation's depth, motion and picture)
+     s.last_frame = now;
+     s.last_jitter[0] = cam.jitter[0], s.last_jitter[1] = cam.jitter[1];
 diff --git a/gpu/vk/vk_temporal.h b/gpu/vk/vk_temporal.h
 index e100bab..1624884 100644
 --- a/gpu/vk/vk_temporal.h
