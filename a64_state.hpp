@@ -52,6 +52,23 @@ struct A64State {
             op == '-' && (((a ^ b) & (a ^ r)) & sign) != 0;
     }
 
+    template<unsigned Width>
+    static constexpr std::uint64_t lane_mask = UINT64_MAX >> (64 - Width);
+
+    template<unsigned Width>
+    static std::uint64_t read_lane(const std::array<std::uint64_t, 2>& value, unsigned lane) {
+        const unsigned bit = Width * lane;
+        return (value[bit / 64] >> (bit % 64)) & lane_mask<Width>;
+    }
+
+    template<unsigned Width>
+    static void write_lane(std::array<std::uint64_t, 2>& target, unsigned lane, std::uint64_t value) {
+        const unsigned bit = Width * lane;
+        const unsigned shift = bit % 64;
+        target[bit / 64] = (target[bit / 64] & ~(lane_mask<Width> << shift)) |
+                           ((value & lane_mask<Width>) << shift);
+    }
+
     bool contains(std::uint64_t address, std::size_t size) const {
         return address >= memory_base && address - memory_base <= memory.size() &&
             size <= memory.size() - (address - memory_base);

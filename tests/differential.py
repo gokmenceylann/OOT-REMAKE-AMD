@@ -30,7 +30,7 @@ def oracle(code, x0):
         raise RuntimeError("guest did not return")
     regs = [cpu.reg_read(reg) for reg in REGS]
     flags = cpu.reg_read(arm.UC_ARM64_REG_NZCV) >> 28
-    vectors = [cpu.reg_read(getattr(arm, f'UC_ARM64_REG_Q{i}')) for i in range(4)]
+    vectors = [cpu.reg_read(getattr(arm, f'UC_ARM64_REG_Q{i}')) for i in range(9)]
     return regs, flags, vectors, bytes(cpu.mem_read(RAM - 16, 48))
 
 

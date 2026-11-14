@@ -15,6 +15,12 @@ zero:
 nested:
     fadd d0, d1, d2
     eor v3.16b, v1.16b, v2.16b
+    add v4.16b, v1.16b, v2.16b
+    sub v5.4s, v1.4s, v2.4s
+    mul v6.4h, v1.4h, v2.4h
+    fadd v7.2d, v1.2d, v2.2d
+    fmul v8.2s, v1.2s, v2.2s
+    add v4.16b, v4.16b, v3.16b
     mov w9, #0x1234
     movk w9, #0xabcd, lsl #16
     lsl w10, w9, #1

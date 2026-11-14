@@ -11,22 +11,22 @@ int main() {
     };
     auto call = fresh();
     call.x[0] = 0xffffffff00000103ULL;
-    if (run_a64(call, 30) != Status::returned || call.x[0] != 3 || ram[16] != 2 || !call.c || call.z)
+    if (run_a64(call, 64) != Status::returned || call.x[0] != 3 || ram[16] != 2 || !call.c || call.z)
         return 1;
     auto branch = fresh();
     branch.x[0] = 1;
-    if (run_a64(branch, 30) != Status::returned || branch.x[0] != 42 || !branch.z)
+    if (run_a64(branch, 64) != Status::returned || branch.x[0] != 42 || !branch.z)
         return 2;
     auto fault = fresh();
     fault.x[31] = 0x2008;
-    if (run_a64(fault, 30) != Status::memory_fault || run_a64(branch, 0) != Status::budget_exhausted)
+    if (run_a64(fault, 64) != Status::memory_fault || run_a64(branch, 0) != Status::budget_exhausted)
         return 3;
     auto bad = fresh();
     bad.x[0] = 1;
     bad.x[30] = 0x123;
-    if (run_a64(bad, 30) != Status::bad_return) return 4;
+    if (run_a64(bad, 64) != Status::bad_return) return 4;
     auto overflow = fresh();
     overflow.x[0] = 0x80000000;
-    if (run_a64(overflow, 30) != Status::returned || !overflow.v || overflow.n || !overflow.c)
+    if (run_a64(overflow, 64) != Status::returned || !overflow.v || overflow.n || !overflow.c)
         return 5;
 }

@@ -70,6 +70,15 @@ MEMORY = {
 
 def lower(op, text):
     tokens = text.split(", ") if text else []
+    if op in ("add", "sub", "mul", "fadd", "fsub", "fmul", "fdiv") and len(tokens) == 3:
+        vectors = [re.fullmatch(r"v([0-9]|[12][0-9]|3[01])\.(8b|16b|4h|8h|2s|4s|2d)", token) for token in tokens]
+        if all(vectors):
+            shape = vectors[0][2]
+            if not all(vector[2] == shape for vector in vectors):
+                raise ValueError("mismatched vector arrangements")
+            if (op.startswith("f") and shape not in ("2s", "4s", "2d")) or (op == "mul" and shape == "2d"):
+                raise ValueError("unsupported vector arrangement")
+            return shape, *(int(vector[1]) for vector in vectors)
     if op in ("eor", "and", "orr") and len(tokens) == 3 and all(
         re.fullmatch(r"v(?:[0-9]|[12][0-9]|3[01])\.16b", token) for token in tokens
     ):
@@ -230,7 +239,25 @@ def emit(ins, last, addresses, stop_calls, host_fill):
             return f"goto L{target:x};"
         return f"{{ s.stop_target = {literal(target)}; return Status::external_branch; }}"
 
-    if op in ("fadd", "fsub", "fmul", "fdiv"):
+    if isinstance(args[0] if args else None, str):
+        shape, dest, lhs, rhs = args
+        width = {"b": 8, "h": 16, "s": 32, "d": 64}[shape[-1]]
+        count = int(shape[:-1])
+        operator = {"add": "+", "sub": "-", "mul": "*",
+                    "fadd": "+", "fsub": "-", "fmul": "*", "fdiv": "/"}[op]
+        out += ["std::array<std::uint64_t, 2> result{};",
+                f"for (unsigned lane = 0; lane < {count}; ++lane) {{",
+                f"    const auto a = A64State::read_lane<{width}>(s.q[{lhs}], lane);",
+                f"    const auto b = A64State::read_lane<{width}>(s.q[{rhs}], lane);"]
+        if op.startswith("f"):
+            typ = "float" if width == 32 else "double"
+            bits = f"std::uint{width}_t"
+            out += [f"    const auto computed = std::bit_cast<{typ}>({bits}(a)) {operator} std::bit_cast<{typ}>({bits}(b));",
+                    f"    A64State::write_lane<{width}>(result, lane, std::bit_cast<{bits}>(computed));"]
+        else:
+            out += [f"    A64State::write_lane<{width}>(result, lane, a {operator} b);"]
+        out += ["}", f"s.q[{dest}] = result;"]
+    elif op in ("fadd", "fsub", "fmul", "fdiv"):
         width, dest, lhs, rhs = args
         typ = "float" if width == 32 else "double"
         bits = f"std::uint{width}_t"
