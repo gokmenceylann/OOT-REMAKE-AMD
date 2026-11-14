@@ -537,6 +537,84 @@ index 6e10a95..26420fb 100644
  /// (linux) a Vulkan FSR 4 library is there and records with descriptor buffers: the device has to enable them
  bool fsr4_wants_descriptor_buffer();
  /// FSR 4 as the temporal upscaler's engine (FSR 4 and its native AA on the Upscaler row); nullptr in a build without it
+diff --git a/gpu/vk/vk_gprof.cpp b/gpu/vk/vk_gprof.cpp
+index 37a2bd3..21d297c 100644
+--- a/gpu/vk/vk_gprof.cpp
++++ b/gpu/vk/vk_gprof.cpp
+@@ -3,6 +3,7 @@
+ #include <cstdio>
+ #include <cstdlib>
+ #include <map>
++#include <cmath>
+ #include <unordered_map>
+ #include <vector>
+ 
+@@ -47,6 +48,8 @@ std::unordered_map<std::string, Agg> totals[2];   // label -> what its spans too
+ double active_ns[2], sum_ns[2];                   // (the command buffers' first timestamp to last, and what their spans took)
+ int64_t recs[2], dropped;
+ int acc_frames = 0;
++uint64_t timestamp_mask = UINT64_MAX;
++std::map<std::string, std::vector<double>> fsr_samples;
+ 
+ Stream* find(VkCommandBuffer cmd) {
+     if (!pool || cur < 0 || !cmd) return nullptr;
+@@ -80,6 +83,17 @@ static int level() {
+ void gprof_begin_recording(int slot, VkCommandBuffer cmd, VkCommandBuffer upload) {
+     if (!gprof_on() || slot < 0 || slot >= kSlots) return;
+     if (!pool) {
++        uint32_t count = 0;
++        vkGetPhysicalDeviceQueueFamilyProperties(dev.physical, &count, nullptr);
++        std::vector<VkQueueFamilyProperties> queues(count);
++        vkGetPhysicalDeviceQueueFamilyProperties(dev.physical, &count, queues.data());
++        if (dev.queue_family >= count || !queues[dev.queue_family].timestampValidBits) {
++            static const bool warned = [] { logf("vk: GPU pass timing unavailable: no valid queue timestamps"); return true; }();
++            (void)warned;
++            return;
++        }
++        const uint32_t bits = queues[dev.queue_family].timestampValidBits;
++        timestamp_mask = bits == 64 ? UINT64_MAX : (uint64_t{1} << bits) - 1;
+         VkQueryPoolCreateInfo qi{VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO};
+         qi.queryType = VK_QUERY_TYPE_TIMESTAMP;
+         qi.queryCount = kSlots * 2 * kQ;
+@@ -165,11 +179,20 @@ void gprof_collect(int slot) {
+             st.spans.clear();
+             continue;
+         }
++        // Unwrap in query order so valid-bit rollover does not invalidate spans.
++        uint64_t previous = t.front() & timestamp_mask, elapsed = 0;
++        for (auto& value : t) {
++            const uint64_t raw = value & timestamp_mask;
++            elapsed += (raw - previous) & timestamp_mask;
++            previous = raw;
++            value = elapsed;
++        }
+         uint64_t first = UINT64_MAX, last = 0;
+         double sum = 0;
+         for (const Span& sp : st.spans) {
+             if (sp.label.empty() || sp.qb >= st.nq || sp.qe >= st.nq || t[sp.qe] <= t[sp.qb]) continue;
+             const double ns = (double)(t[sp.qe] - t[sp.qb]) * period;
++            if (sp.label.starts_with("FSR 4 ")) fsr_samples[sp.label].push_back(ns / 1e6);
+             Agg& a = totals[k][sp.label];
+             a.ns += ns, a.n++, a.items += sp.items, a.bytes += sp.bytes;
+             if (sp.nested) continue;
+@@ -244,6 +267,17 @@ void gprof_report(int frames) {
+                  r.name.c_str());
+         }
+     }
++    for (auto& [label, samples] : fsr_samples) {
++        std::sort(samples.begin(), samples.end());
++        double sum = 0;
++        for (double sample : samples) sum += sample;
++        const auto rank = [&](double q) { return samples[(size_t)std::ceil(q * samples.size()) - 1]; };
++        const size_t mid = samples.size() / 2;
++        const double median = samples.size() % 2 ? samples[mid] : (samples[mid - 1] + samples[mid]) / 2;
++        logf("vk: GPU span %s samples=%zu mean=%.4f median=%.4f p95=%.4f p99=%.4f max=%.4f ms",
++             label.c_str(), samples.size(), sum / samples.size(), median, rank(0.95), rank(0.99), samples.back());
++    }
++    fsr_samples.clear();
+     for (auto& t : totals) t.clear();
+     active_ns[0] = active_ns[1] = sum_ns[0] = sum_ns[1] = 0;
+     recs[0] = recs[1] = dropped = 0;
 diff --git a/gpu/vk/vk_main.cpp b/gpu/vk/vk_main.cpp
 index 1c5afd4..ccf7e76 100644
 --- a/gpu/vk/vk_main.cpp

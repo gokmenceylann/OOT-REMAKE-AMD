@@ -23,12 +23,12 @@ $start.RedirectStandardError = $true
 $start.EnvironmentVariables['RX_VK_FRAME_LOG'] = $frameLog
 if ($PassTiming) { $start.EnvironmentVariables['RX_VK_PASS_TIMING'] = '1' }
 $process = [Diagnostics.Process]::Start($start)
-$log = [IO.File]::Create($stderr)
+$log = [IO.File]::Open($stderr, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::Read)
 try {
     $copy = $process.StandardError.BaseStream.CopyToAsync($log)
     Write-Host 'Play the comparison scene, then close the game to finish the capture.'
     $process.WaitForExit()
-    $copy.GetAwaiter().GetResult()
+    [void]$copy.GetAwaiter().GetResult()
 } finally {
     $log.Dispose()
     $process.Dispose()
@@ -37,5 +37,5 @@ if ((Test-Path -LiteralPath $frameLog) -and @(Import-Csv -LiteralPath $frameLog)
     & "$PSScriptRoot/Measure-FrameTimes.ps1" -CsvPath $frameLog |
         ConvertTo-Json | Set-Content -LiteralPath (Join-Path $out 'session-summary.json') -Encoding UTF8
 }
-Select-String -LiteralPath $stderr -Pattern 'provider dispatched|fsr3.*frames drawn|FSR 3.1 fallback|first negative VkResult|destroyed frame|GPU pass timing|FSR 4 SDK dispatch|memory heaps|compaction.*over' |
+Select-String -LiteralPath $stderr -Pattern 'provider dispatched|fsr3.*frames drawn|FSR 3.1 fallback|first negative VkResult|destroyed frame|GPU pass timing|GPU span|FSR 4 SDK dispatch|memory heaps|compaction.*over' |
     ForEach-Object Line | Set-Content -LiteralPath (Join-Path $out 'diagnostics.txt') -Encoding UTF8
