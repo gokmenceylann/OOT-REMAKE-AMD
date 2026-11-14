@@ -641,7 +641,7 @@ index 1c5afd4..ccf7e76 100644
      }
  
 diff --git a/gpu/vk/vk_menu.cpp b/gpu/vk/vk_menu.cpp
-index 3985f3e..15ac8aa 100644
+index 3985f3e..403c211 100644
 --- a/gpu/vk/vk_menu.cpp
 +++ b/gpu/vk/vk_menu.cpp
 @@ -29,6 +29,7 @@
@@ -662,7 +662,7 @@ index 3985f3e..15ac8aa 100644
      if (v != ur::GAME || (!dn && !fn)) return t[v];
      static char b[DLSS_WHY_COUNT][FSR_WHY_COUNT][320];
      snprintf(b[d][f], sizeof b[d][f], "%s%s%s%s%s", t[0], dn ? " " : "", dn ? dn : "", fn ? " " : "", fn ? fn : "");
-@@ -611,12 +613,19 @@ void apply_preset(int p) {
+@@ -611,12 +613,21 @@ void apply_preset(int p) {
      sync_preset_budgets(p);
  }
  
@@ -672,7 +672,9 @@ index 3985f3e..15ac8aa 100644
 -           "Resolution 100% (with DLSS its nearest mode), Catmull-Rom, Sharpness 30%.",
 -           "Resolution 100% (with DLSS its nearest mode), Lanczos, Sharpness 40%.",
 -           "Resolution 100% (with DLSS its nearest mode), Lanczos, Sharpness 50%.")
-+const char* hn_preset(int value, int) {
++const char* hn_preset(int value, int variant) {
++    if (variant > 0) return nullptr;
++    if (variant == 0) return "Suggested starting preset: Minimum Low Balanced High Ultra. Select it to apply. For 60 FPS testing, turn Frame generation Off.";
 +    if (value != 0) return "Applies this preset's scaling and resource limits. Upscaler and Frame generation stay as selected.";
 +    static char hint[160];
 +    if (!dev.device) return "Choose a preset to apply its settings.";
