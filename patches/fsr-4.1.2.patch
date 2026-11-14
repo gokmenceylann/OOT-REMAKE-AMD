@@ -81,7 +81,7 @@ index 0000000..b293ac1
 +
 +}
 diff --git a/gpu/vk/vk_draw.cpp b/gpu/vk/vk_draw.cpp
-index dd8c0a7..08986ba 100644
+index dd8c0a7..07d7b6d 100644
 --- a/gpu/vk/vk_draw.cpp
 +++ b/gpu/vk/vk_draw.cpp
 @@ -41,6 +41,7 @@
@@ -92,7 +92,7 @@ index dd8c0a7..08986ba 100644
  #include "vk_draw.h"
  #include "vk_menu.h"          // (opts.anisotropy: the Anisotropic filtering row; resolution_scale)
  #include "upscaler_rows.h"    // (upscale_lod_bias: which upscalers draw the 3D smaller)
-@@ -725,14 +726,36 @@ std::atomic<int64_t> pcache_built_since_save{0};
+@@ -725,30 +726,54 @@ std::atomic<int64_t> pcache_built_since_save{0};
  // most precompiled pipelines as not found in the app's cache (~460 of ~12,900 here), which it then serves from its own.
  std::atomic<size_t> pcache_saved_size{0};
  /// A pipeline cache file's data, or nothing when it cannot be read or was made by another device or driver
@@ -103,14 +103,18 @@ index dd8c0a7..08986ba 100644
          _fseeki64(f, 0, SEEK_END);
          const int64_t sz = _ftelli64(f);
          _fseeki64(f, 0, SEEK_SET);
+-        if (sz > 32) {
+-            data.resize((size_t)sz);
+-            if (fread(data.data(), 1, data.size(), f) != data.size()) data.clear();
 +#ifdef _WIN32
 +        if (commit_skip && sz > 32) {
 +            MEMORYSTATUSEX status{};
 +            status.dwLength = sizeof status;
-+            if (GlobalMemoryStatusEx(&status) && !pipeline_cache_fits_commit((uint64_t)sz, status.ullAvailPageFile)) {
++            const bool measured = GlobalMemoryStatusEx(&status) && status.ullTotalPageFile && status.ullAvailPageFile <= status.ullTotalPageFile;
++            if (!measured || !pipeline_cache_fits_commit((uint64_t)sz, status.ullAvailPageFile)) {
 +                *commit_skip = true;
-+                logf("vk: pipeline cache retained on disk: %llu bytes, available commit %llu bytes",
-+                     (unsigned long long)sz, (unsigned long long)status.ullAvailPageFile);
++                logf("vk: pipeline cache retained on disk: %llu bytes, available commit %llu bytes (measurement valid=%d)",
++                     (unsigned long long)sz, (unsigned long long)status.ullAvailPageFile, (int)measured);
 +                fclose(f);
 +                return {};
 +            }
@@ -118,8 +122,15 @@ index dd8c0a7..08986ba 100644
 +#else
 +        (void)commit_skip;
 +#endif
-         if (sz > 32) {
--            data.resize((size_t)sz);
++        uint8_t header[32]{};
++        uint32_t fields[4]{};
++        const bool read_header = sz > 32 && fread(header, 1, sizeof header, f) == sizeof header;
++        if (read_header) std::memcpy(fields, header, sizeof fields);
++        const bool valid = read_header && fields[0] >= sizeof header && fields[0] <= (uint64_t)sz &&
++                           fields[1] == VK_PIPELINE_CACHE_HEADER_VERSION_ONE && fields[2] == dev.props.vendorID &&
++                           fields[3] == dev.props.deviceID && !std::memcmp(header + 16, dev.props.pipelineCacheUUID, VK_UUID_SIZE);
++        if (!valid && commit_skip && sz > 0) *commit_skip = true;
++        if (valid && _fseeki64(f, 0, SEEK_SET) == 0) {
 +            try {
 +                data.resize((size_t)sz);
 +            } catch (const std::bad_alloc&) {
@@ -128,10 +139,31 @@ index dd8c0a7..08986ba 100644
 +                logf("vk: pipeline cache retained on disk: host allocation failed for %llu bytes", (unsigned long long)sz);
 +                return {};
 +            }
-             if (fread(data.data(), 1, data.size(), f) != data.size()) data.clear();
++            if (fread(data.data(), 1, data.size(), f) != data.size()) {
++                if (commit_skip) *commit_skip = true;
++                std::vector<uint8_t>().swap(data);
++            }
++        } else if (valid && commit_skip) {
++            *commit_skip = true;
          }
          fclose(f);
-@@ -808,7 +831,6 @@ size_t play_files_merge() {
+     }
+-    // (data of another device or driver is dropped before Vulkan sees it)
+-    if (data.size() >= 32) {
+-        uint32_t head_size, version, vendor, device;
+-        std::memcpy(&head_size, data.data(), 4);
+-        std::memcpy(&version, data.data() + 4, 4);
+-        std::memcpy(&vendor, data.data() + 8, 4);
+-        std::memcpy(&device, data.data() + 12, 4);
+-        if (head_size < 32 || head_size > data.size() || version != VK_PIPELINE_CACHE_HEADER_VERSION_ONE ||   // (hookshot)
+-            vendor != dev.props.vendorID || device != dev.props.deviceID ||
+-            std::memcmp(data.data() + 16, dev.props.pipelineCacheUUID, VK_UUID_SIZE))
+-            data.clear();
+-    }
+     return data;
+ }
+ std::string pcache_dir;
+@@ -808,7 +833,6 @@ size_t play_files_merge() {
          VkPipelineCacheCreateInfo ci{VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO};
          ci.initialDataSize = part.size(), ci.pInitialData = part.data();
          if (part.empty() || vkCreatePipelineCache(dev.device, &ci, nullptr, &tmp) != VK_SUCCESS) {
@@ -139,7 +171,18 @@ index dd8c0a7..08986ba 100644
              continue;
          }
          if (vkMergePipelineCaches(dev.device, pcache, 1, &tmp) == VK_SUCCESS) merged.push_back(path), merged_kb += part.size() >> 10;
-@@ -923,18 +945,24 @@ void pcache_init() {
+@@ -914,7 +938,9 @@ VkResult create_cached(VkResult (*create)(VkPipelineCache, const CI*, VkPipeline
+ 
+ bool pcache_no_save = false;   // (RX_VK_PCACHE_LOAD=0: pcache_init)
+ void pcache_init() {
+-    if (pcache) return;
++    static bool attempted = false;
++    if (attempted) return;
++    attempted = true;
+     char exe[MAX_PATH];
+     const DWORD n = game_module_path(exe, MAX_PATH);
+     std::string dir(exe, n);
+@@ -923,18 +949,30 @@ void pcache_init() {
      // (RX_VK_PCACHE_LOAD=0, an A/B of what the file costs in memory: its 2.5 GB read whole and held by the driver. The cache
      // starts empty and is not saved; the driver's own shader cache is all there is)
      static const bool off = getenv("RX_VK_PCACHE_LOAD") && atoi(getenv("RX_VK_PCACHE_LOAD")) == 0;
@@ -152,19 +195,26 @@ index dd8c0a7..08986ba 100644
      ci.initialDataSize = data.size();
      ci.pInitialData = data.empty() ? nullptr : data.data();
 -    if (vkCreatePipelineCache(dev.device, &ci, nullptr, &pcache) != VK_SUCCESS) {
-+    const VkResult result = vkCreatePipelineCache(dev.device, &ci, nullptr, &pcache);
++    VkPipelineCache cache = VK_NULL_HANDLE;
++    VkResult result = vkCreatePipelineCache(dev.device, &ci, nullptr, &cache);
 +    if (result != VK_SUCCESS && !data.empty()) {
 +        logf("vk: pipeline cache import failed: VkResult=%d; existing cache retained", (int)result);
 +        commit_skip = pcache_no_save = true;
-+        pcache = VK_NULL_HANDLE;
++        cache = VK_NULL_HANDLE;
 +        std::vector<uint8_t>().swap(data);
          ci.initialDataSize = 0, ci.pInitialData = nullptr;
-         vkCreatePipelineCache(dev.device, &ci, nullptr, &pcache);
+-        vkCreatePipelineCache(dev.device, &ci, nullptr, &pcache);
++        result = vkCreatePipelineCache(dev.device, &ci, nullptr, &cache);
++    }
++    if (result != VK_SUCCESS) {
++        logf("vk: empty pipeline cache creation failed: VkResult=%d; continuing without a pipeline cache", (int)result);
++        return;
      }
++    pcache = cache;
      logf("vk: pipeline cache %s (%zu KB)", pcache_path.c_str(), data.size() >> 10);
      data = {};
 -    if (pcache) play_files_merge();
-+    if (pcache && !commit_skip) play_files_merge();
++    if (pcache && !pcache_no_save) play_files_merge();
      // (what it holds as read, the play files too: a save of data that size has nothing to add to the files)
      size_t held = 0;
      if (pcache && vkGetPipelineCacheData(dev.device, pcache, &held, nullptr) == VK_SUCCESS) pcache_saved_size = held;
