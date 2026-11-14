@@ -21,7 +21,7 @@ Bu komutlar sırasıyla NSO sınırlarını kontrol eder, düz/LZ4 segmentlerini
 ```powershell
 New-Item -ItemType Directory -Force work
 python lift_rtld.py 'C:\Games\OOT\exefs' work/entry-local.cpp --host-fill
-cl /nologo /std:c++20 /O2 /EHsc entry-local.cpp /Fe:entry-local.exe
+cl /nologo /std:c++20 /O2 /EHsc /I. work/entry-local.cpp /Fe:work/entry-local.exe
 .\work\entry-local.exe
 ```
 
