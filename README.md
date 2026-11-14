@@ -15,16 +15,10 @@ Python, llvm-mingw ve Vulkan derleme bağımlılıklarını hazırlayıp `script
 
 Yerel Mako 4.1 derlemesi tamamlandı. Oyun işlemi açıldı, AMD Vulkan sürücüsünü yükledi ve ilk 60 saniyelik kayıtta **28,82 Present FPS** ortalaması verdi. Oyun sahnesi, fiziksel GPU seçimi, kararlı 60 FPS ve FSR bu ölçümde doğrulanmadı. [Ölçüm koşulları ve sonuçları](docs/validation-rx6700m.md)
 
-## Geliştirme
+## Depo yapısı
 
-| Konum | İçerik |
-| --- | --- |
-| `scripts/` | Yerel Windows derleme komutu |
-| `upstream/mako/` | Sabitlenmiş lifter, Horizon ve NVN2/Vulkan kaynakları |
-| `docs/` | Derleme, ölçüm ve bağımsız AArch64/NSO araçları |
-| `tests/` | Python testleri, Unicorn karşılaştırması ve C++ test girdileri |
-| Kök dizindeki Python ve C++ dosyaları | Mevcut komut satırı girişleri ve bağımsız geliştirme araçları |
+- `scripts/Build-LocalGame.ps1` yerel Windows derlemesini başlatır.
+- `upstream/mako/` sabitlenmiş Mako kaynak alt modülüdür.
+- `docs/` derleme, lisans ve RX 6700M ölçüm bilgilerini içerir.
 
-[NSO, AArch64, RTLD ve test komutları](docs/development.md)
-
-Oyun dökümleri, ExeFS/RomFS, anahtarlar, üretilmiş C/C++ kodu, oyun EXE/DLL dosyaları ve shader önbellekleri yerelde tutulur. [Kaynak ve lisans bilgisi](docs/mako-build.md#kaynak-ve-lisans)
+Oyun dökümleri, ExeFS/RomFS, anahtarlar, oyun verisinden üretilen kod, EXE/DLL ve shader önbellekleri yerelde tutulur. [Kaynak ve lisans bilgisi](docs/mako-build.md#kaynak-ve-lisans)
