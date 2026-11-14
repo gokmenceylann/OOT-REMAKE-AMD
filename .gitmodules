@@ -1,0 +1,3 @@
+[submodule "upstream/mako"]
+	path = upstream/mako
+	url = https://github.com/Shakoquo/Mako.git
