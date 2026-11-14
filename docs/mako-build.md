@@ -7,7 +7,7 @@ git submodule update --init
 .\scripts\Build-LocalGame.ps1 -ExeFS 'D:\Game\exefs' -RomFS 'D:\Game\romfs' -LocalRoot 'D:\OOT-local' -Python 'C:\Tools\Python\python.exe' -LlvmMingw 'C:\Tools\llvm-mingw' -Cpm 'C:\Tools\cpm'
 ```
 
-Python ortamında üst projenin derleme gereksinimleri, CPM önbelleğinde Vulkan-Headers, SPIRV-Headers ve VulkanMemoryAllocator bulunmalıdır. Derleme tamamlandığında çıktıdaki oyun klasöründen `hookshot.exe` çalıştırılır. İlk çalıştırma öncesi ROMFS, modüller ve derleme çıktıları yerelde kalır.
+Python ortamında `python -m pip install -r upstream/mako/requirements.txt` ile tanımlanan üst proje derleme gereksinimleri, CPM önbelleğinde Vulkan-Headers, SPIRV-Headers ve VulkanMemoryAllocator bulunmalıdır. Derleme tamamlandığında çıktıdaki oyun klasöründen `hookshot.exe` çalıştırılır. İlk çalıştırma öncesi ROMFS, modüller ve derleme çıktıları yerelde kalır.
 
 ## Kaynak ve lisans
 

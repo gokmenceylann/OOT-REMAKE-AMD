@@ -2,6 +2,12 @@
 
 Windows x64 statik yeniden derleme araştırması. Bu sürüm NSO yükleme ve sembol çözümlemesini, temel AArch64 bloklarını C++20'ye çevirmeyi ve RTLD başlangıç denemesini destekler. Zelda'yı başlatmak için Horizon ve NVN2 çalışma ortamı hâlâ eksiktir.
 
+## Doğrudan Windows derlemesi
+
+Oyun derlemesi için Hookshot tabanlı Mako çalışma ortamı bir alt modüle sabitlenmiştir. Bu hat AArch64 lifting, Horizon ve NVN2/Vulkan kodunu AMD düzeltmeleriyle birlikte kullanır. Yerel oyunu derlemek için [derleme ve lisans rehberine](docs/mako-build.md) bak.
+
+Aşağıdaki bağımsız araştırma araçları, NSO ve AArch64 davranışlarını ayrı ayrı sınamak içindir.
+
 ## Yerel ExeFS
 
 ```powershell
