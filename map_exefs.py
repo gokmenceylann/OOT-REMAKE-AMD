@@ -32,7 +32,7 @@ def decode_relr(entries):
             cursor += 63 * 8
 
 
-def relocate(path, base):
+def relocate(path, base, metadata=False):
     info, contents, bss = read_module(path)
     ranges = [(part["memory_offset"], part["memory_offset"] + len(contents[name]))
               for name, part in info["segments"].items()]
@@ -108,9 +108,12 @@ def relocate(path, base):
             patch(target, base + unpack_from("<Q", image, target)[0])
     for target, value in patches.items():
         pack_into("<Q", image, target, value)
-    return image, dict(module=path.name, relative_rela_applied=rela_count, relative_relr_applied=len(patches) - rela_count,
+    report = dict(module=path.name, relative_rela_applied=rela_count, relative_relr_applied=len(patches) - rela_count,
                        unresolved_rela=dict(pending),
                        other_table_tags=[tag for tag in (17, 18, 19) if tag in tags])
+    if metadata:
+        return image, report, tags, ranges, bss, tables
+    return image, report
 
 
 def main():
