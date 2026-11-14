@@ -48,11 +48,11 @@ try {
     $env:HOOKSHOT_NO_UPDATE_CHECK = '1'
     $fsrArgs = @()
     if ($EnableFsr412) {
-        git -C $source apply --reverse --check $patch 2>$null
+        git -C $source apply --ignore-whitespace --reverse --check $patch 2>$null
         if ($LASTEXITCODE -ne 0) {
-            git -C $source apply --check $patch
-            if ($LASTEXITCODE -ne 0) { throw 'Cannot apply the FSR patch to this checkout.' }
-            git -C $source apply $patch
+            git -C $source apply --ignore-whitespace --check $patch
+            if ($LASTEXITCODE -ne 0) { throw 'Cannot apply --ignore-whitespace the FSR patch to this checkout.' }
+            git -C $source apply --ignore-whitespace $patch
             if ($LASTEXITCODE -ne 0) { throw 'FSR patch failed.' }
         }
         $fsrArgs = @('--fsr')
