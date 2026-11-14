@@ -1,5 +1,5 @@
 diff --git a/gpu/vk/vk_vma.cpp b/gpu/vk/vk_vma.cpp
-index 5f65114..eccf4d1 100644
+index 5f65114..c5c8d4c 100644
 --- a/gpu/vk/vk_vma.cpp
 +++ b/gpu/vk/vk_vma.cpp
 @@ -51,6 +51,21 @@ const uint64_t kImageBlock = (getenv("RX_VK_IMAGE_BLOCK_MB") ? (uint64_t)std::ma
@@ -36,14 +36,42 @@ index 5f65114..eccf4d1 100644
           type, target_image_pool ? "" : ": not made");
      return target_image_pool;
  }
-@@ -227,6 +242,27 @@ bool image_compact_pass_end(uint64_t* freed_bytes, uint32_t* freed_blocks) {
+@@ -137,7 +152,8 @@ VmaPool textures_pool() {
+     static const bool ahead_off = getenv("RX_VK_BLOCK_AHEAD") && atoi(getenv("RX_VK_BLOCK_AHEAD")) == 0;
+     if (texture_pool && !ahead_off) {
+         const uint32_t type_bits = 1u << type;
+-        std::thread([type_bits] {
++        const uint32_t heap = dev.memory.memoryTypes[type].heapIndex;
++        std::thread([type_bits, heap] {
+             int64_t made = 0;
+             for (;;) {
+                 std::this_thread::sleep_for(std::chrono::milliseconds(100));
+@@ -152,6 +168,16 @@ VmaPool textures_pool() {
+                 vmaGetPoolStatistics(vma, texture_pool, &st);
+                 const uint64_t free_bytes = st.blockBytes - std::min(st.blockBytes, st.allocationBytes);
+                 if (free_bytes >= kImageBlock / 2) continue;
++                // Reserve headroom for actual game resources before speculative preallocation.
++                if (dev.memory_budget && dev.props.vendorID == 0x1002 && !getenv("RX_VK_BLOCK_AHEAD_LOW_BUDGET")) {
++                    VmaBudget budgets[VK_MAX_MEMORY_HEAPS]{};
++                    vmaGetHeapBudgets(vma, budgets);
++                    const auto& b = budgets[heap];
++                    if (b.budget && b.budget - std::min(b.budget, b.usage) < 2 * kImageBlock) {
++                        std::this_thread::sleep_for(std::chrono::milliseconds(400));
++                        continue;
++                    }
++                }
+                 VkMemoryRequirements req{};
+                 req.size = kImageBlock;   // (a whole block: it fits only in an empty one, made now if there is none; one spare at most)
+                 req.alignment = 65536;
+@@ -227,7 +253,59 @@ bool image_compact_pass_end(uint64_t* freed_bytes, uint32_t* freed_blocks) {
      return compact_over(freed_bytes, freed_blocks);
  }
  
++std::atomic<unsigned> allocation_failures{0};
++
 +static void allocation_failure(const char* kind, VkResult result, uint64_t bytes,
 +                               uint32_t usage, const VkImageCreateInfo* image = nullptr) {
-+    static std::atomic<unsigned> failures{0};
-+    const unsigned count = ++failures;
++    const unsigned count = ++allocation_failures;
 +    if (count > 8 && count % 120 != 0) return;
 +    VmaBudget budgets[VK_MAX_MEMORY_HEAPS]{};
 +    vmaGetHeapBudgets(vma, budgets);
@@ -61,16 +89,59 @@ index 5f65114..eccf4d1 100644
 +    }
 +}
 +
++namespace {
++struct ResourceCounter {
++    const char* label;
++    std::atomic<uint64_t> bytes{0};
++    std::atomic<uint64_t> allocations{0};
++};
++ResourceCounter sampled{"sampled"}, targets{"render-target"}, depth{"depth"},
++                images{"other-image"}, buffers{"buffer"};
++
++
++void track(VmaAllocation allocation, ResourceCounter& kind) {
++    kind.bytes.fetch_add(allocation_size(allocation), std::memory_order_relaxed);
++    kind.allocations.fetch_add(1, std::memory_order_relaxed);
++    vmaSetAllocationUserData(vma, allocation, &kind);
++}
++void untrack(VmaAllocation allocation) {
++    if (!allocation) return;
++    VmaAllocationInfo info{};
++    vmaGetAllocationInfo(vma, allocation, &info);
++    if (auto* kind = static_cast<ResourceCounter*>(info.pUserData)) {
++        kind->bytes.fetch_sub(info.size, std::memory_order_relaxed);
++        kind->allocations.fetch_sub(1, std::memory_order_relaxed);
++    }
++}
++}
++
  bool create_image(const VkImageCreateInfo& ci, VkImage& image, VmaAllocation& allocation, bool dedicated, bool target, bool textures) {
++    auto& category = ci.usage & VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT ? depth
++                     : target ? targets
++                     : textures ? sampled : images;
++    const auto created = [&] { track(allocation, category); return true; };
      VmaAllocationCreateInfo ai{};
      ai.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE;
-@@ -248,20 +284,30 @@ bool create_image(const VkImageCreateInfo& ci, VkImage& image, VmaAllocation& al
+     // (in VRAM or not at all: an image VMA puts in system memory when VRAM is full is read over PCIe every frame,
+@@ -237,7 +315,7 @@ bool create_image(const VkImageCreateInfo& ci, VkImage& image, VmaAllocation& al
+     if (dedicated) {   // (a memory object of its own, which freeing gives back whole: a pool's block is kept by VMA when it empties)
+         VmaAllocationCreateInfo dai = ai;
+         dai.flags |= VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT;
+-        if (vmaCreateImage(vma, &ci, &dai, &image, &allocation, nullptr) == VK_SUCCESS) return true;
++        if (vmaCreateImage(vma, &ci, &dai, &image, &allocation, nullptr) == VK_SUCCESS) return created();
+     }
+     static const bool no_pool = getenv("RX_VK_NO_IMAGE_POOL") != nullptr;
+     if (VmaPool pool = no_pool ? VK_NULL_HANDLE
+@@ -246,27 +324,38 @@ bool create_image(const VkImageCreateInfo& ci, VkImage& image, VmaAllocation& al
+         VmaAllocationCreateInfo pai = ai;
+         pai.pool = pool;
          pai.usage = VMA_MEMORY_USAGE_UNKNOWN;
-         if (vmaCreateImage(vma, &ci, &pai, &image, &allocation, nullptr) == VK_SUCCESS) return true;
+-        if (vmaCreateImage(vma, &ci, &pai, &image, &allocation, nullptr) == VK_SUCCESS) return true;
++        if (vmaCreateImage(vma, &ci, &pai, &image, &allocation, nullptr) == VK_SUCCESS) return created();
      }
 -    if (vmaCreateImage(vma, &ci, &ai, &image, &allocation, nullptr) == VK_SUCCESS) return true;
 +    VkResult result = vmaCreateImage(vma, &ci, &ai, &image, &allocation, nullptr);
-+    if (result == VK_SUCCESS) return true;
++    if (result == VK_SUCCESS) return created();
      if (ai.flags & VMA_ALLOCATION_CREATE_WITHIN_BUDGET_BIT) {
          static std::atomic<int> told_budget{0};
          if (told_budget++ < 10) logf("vk: image over budget, retrying without WITHIN_BUDGET");
@@ -78,7 +149,7 @@ index 5f65114..eccf4d1 100644
          vai.flags &= ~VMA_ALLOCATION_CREATE_WITHIN_BUDGET_BIT;
 -        if (vmaCreateImage(vma, &ci, &vai, &image, &allocation, nullptr) == VK_SUCCESS) return true;
 +        result = vmaCreateImage(vma, &ci, &vai, &image, &allocation, nullptr);
-+        if (result == VK_SUCCESS) return true;
++        if (result == VK_SUCCESS) return created();
      }
      // (hookshot) VRAM is full (a 4 GB card at a high resolution, #96): an image left unmade is a black screen, so it goes
      // to system memory instead, slow but drawn
@@ -98,8 +169,15 @@ index 5f65114..eccf4d1 100644
 +    }
      static std::atomic<int> told{0};
      if (told++ < 4) logf("vk: VRAM full: a %ux%u image (format %d) in system memory", ci.extent.width, ci.extent.height, (int)ci.format);
-     return true;
-@@ -287,7 +333,11 @@ bool create_buffer(uint64_t size, VkBufferUsageFlags usage, bool host_visible, V
+-    return true;
++    return created();
+ }
+ void destroy_image(VkImage image, VmaAllocation allocation) {
++    untrack(allocation);
+     vmaDestroyImage(vma, image, allocation);
+ }
+ uint64_t allocation_size(VmaAllocation allocation) {
+@@ -287,7 +376,12 @@ bool create_buffer(uint64_t size, VkBufferUsageFlags usage, bool host_visible, V
      static const bool blocks = getenv("RX_VK_BLOCK_BUFFERS") != nullptr;
      if (dedicated && !blocks) ai.flags |= VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT;
      VmaAllocationInfo info{};
@@ -109,10 +187,11 @@ index 5f65114..eccf4d1 100644
 +        allocation_failure("buffer", result, size, usage);
 +        return false;
 +    }
++    track(allocation, buffers);
      if (mapped) *mapped = info.pMappedData;
      return true;
  }
-@@ -303,7 +353,11 @@ bool create_buffer_cached(uint64_t size, VkBufferUsageFlags usage, VkBuffer& buf
+@@ -303,7 +397,12 @@ bool create_buffer_cached(uint64_t size, VkBufferUsageFlags usage, VkBuffer& buf
      ai.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT;
      if (dedicated) ai.flags |= VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT;   // (its own memory object: no part of a 64 MB block left unused)
      VmaAllocationInfo info{};
@@ -122,17 +201,42 @@ index 5f65114..eccf4d1 100644
 +        allocation_failure("cached host buffer", result, size, usage);
 +        return false;
 +    }
++    track(allocation, buffers);
      if (mapped) *mapped = info.pMappedData;
      return true;
  }
-@@ -328,7 +382,9 @@ bool create_device_buffer(uint64_t size, VkBufferUsageFlags usage, VkBuffer& buf
+@@ -317,6 +416,7 @@ void invalidate_mapped(VmaAllocation allocation, uint64_t size) {
+     if (size) vmaInvalidateAllocation(vma, allocation, 0, size);
+ }
+ void destroy_buffer(VkBuffer buffer, VmaAllocation allocation) {
++    untrack(allocation);
+     vmaDestroyBuffer(vma, buffer, allocation);
+ }
+ bool create_device_buffer(uint64_t size, VkBufferUsageFlags usage, VkBuffer& buffer, VmaAllocation& allocation, bool dedicated) {
+@@ -328,7 +428,10 @@ bool create_device_buffer(uint64_t size, VkBufferUsageFlags usage, VkBuffer& buf
      ai.requiredFlags = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
      if (dev.memory_budget) ai.flags = VMA_ALLOCATION_CREATE_WITHIN_BUDGET_BIT;
      if (dedicated) ai.flags |= VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT;
 -    return vmaCreateBuffer(vma, &bi, &ai, &buffer, &allocation, nullptr) == VK_SUCCESS;
 +    const VkResult result = vmaCreateBuffer(vma, &bi, &ai, &buffer, &allocation, nullptr);
 +    if (result != VK_SUCCESS) allocation_failure("device buffer", result, size, usage);
++    else track(allocation, buffers);
 +    return result == VK_SUCCESS;
  }
  /// (every heap: what VMA has in blocks and allocations there, what the process uses of it, its budget; one line)
  /// The image pools: their blocks, the images in them, and the free ranges between them (every 600 presents, with the heaps)
+@@ -345,6 +448,14 @@ void vma_log_image_blocks() {
+     }
+ }
+ void vma_log_heaps() {
++    for (const auto* kind : {&sampled, &targets, &depth, &images, &buffers})
++        logf("vk: telemetry VMA live %s: %llu bytes, %llu allocations",
++             kind->label, (unsigned long long)kind->bytes.load(std::memory_order_relaxed),
++             (unsigned long long)kind->allocations.load(std::memory_order_relaxed));
++    logf("vk: telemetry final VMA allocation failures: %u", allocation_failures.load());
++    for (uint32_t h = 0; h < dev.memory.memoryHeapCount; ++h)
++        logf("vk: telemetry Vulkan heap %u physical size=%llu bytes flags=%#x",
++             h, (unsigned long long)dev.memory.memoryHeaps[h].size, dev.memory.memoryHeaps[h].flags);
+     VmaBudget b[VK_MAX_MEMORY_HEAPS]{};
+     vmaGetHeapBudgets(vma, b);
+     char line[1024];
