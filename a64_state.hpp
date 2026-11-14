@@ -5,7 +5,8 @@
 #include <cstdint>
 #include <span>
 
-enum class Status { returned, fell_through, memory_fault, bad_return, budget_exhausted, external_branch };
+enum class Status { returned, fell_through, memory_fault, bad_return, budget_exhausted, external_branch, guest_exit, unsupported_service };
+enum class ServiceResult { resume, exit_process, unsupported };
 
 struct A64State {
     static constexpr std::uint64_t return_to_host = UINT64_MAX;
@@ -29,6 +30,15 @@ struct A64State {
             }
         }
         return false;
+    }
+
+    using ServiceHandler = ServiceResult (*)(A64State&, std::uint16_t);
+    ServiceHandler service_handler = nullptr;
+    std::uint16_t last_service{};
+
+    ServiceResult invoke_service(std::uint16_t service) {
+        last_service = service;
+        return service_handler ? service_handler(*this, service) : ServiceResult::unsupported;
     }
 
     A64State() { x[30] = return_to_host; }

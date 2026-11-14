@@ -90,14 +90,16 @@ def main():
             run("clang++" + suffix, "-std=c++20", "-O2", "-Wall", "-Wextra", "-Werror",
                 "-I", str(ROOT), str(cpp), str(source), "-o", str(executable))
             run(str(executable))
-        run("clang" + suffix, "--target=aarch64-none-elf", "-c", str(ROOT / "tests/host_abi.S"), "-o", str(obj))
-        run("llvm-objcopy" + suffix, "-O", "binary", "--only-section=.text", str(obj), str(binary))
-        bridge = temp / "bridge.cpp"
-        run(sys.executable, str(ROOT / "a64_compile.py"), str(binary), str(bridge))
-        executable = temp / ("host_abi" + suffix)
-        run("clang++" + suffix, "-std=c++20", "-O2", "-Wall", "-Wextra", "-Werror",
-            "-I", str(ROOT), str(bridge), str(ROOT / "tests/host_abi.cpp"), "-o", str(executable))
-        run(str(executable))
+        for fixture in ("host_abi", "horizon"):
+            run("clang" + suffix, "--target=aarch64-none-elf", "-c", str(ROOT / f"tests/{fixture}.S"), "-o", str(obj))
+            run("llvm-objcopy" + suffix, "-O", "binary", "--only-section=.text", str(obj), str(binary))
+            generated = temp / f"{fixture}.cpp"
+            run(sys.executable, str(ROOT / "a64_compile.py"), str(binary), str(generated))
+            executable = temp / (fixture + suffix)
+            run("clang++" + suffix, "-std=c++20", "-O2", "-Wall", "-Wextra", "-Werror",
+                "-I", str(ROOT), str(generated), str(ROOT / f"tests/{fixture}.cpp"), "-o", str(executable))
+            run(str(executable))
+        print("Host ABI and Horizon SVC tests passed")
         print(f"{len(cases)} Unicorn comparisons passed (registers, flags and memory); fault tests passed")
 
 

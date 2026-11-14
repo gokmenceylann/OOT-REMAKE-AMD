@@ -154,6 +154,8 @@ def lower(op, text):
         return (register(tokens[0]),)
     elif op == "ret" and len(tokens) <= 1:
         return (register(tokens[0] if tokens else "x30"),)
+    elif op == "svc" and len(tokens) == 1:
+        return (immediate(tokens[0]),)
     elif op == "nop" and not tokens:
         return ()
     raise ValueError(f"unsupported form: {op} {text}")
@@ -317,6 +319,10 @@ def emit(ins, last, addresses, stop_calls, host_fill):
                 out.append(f"if (!s.store({location}, {size}, {read(dest)})) return Status::memory_fault;")
         if mem.writeback:
             out += write(mem.base, "updated")
+    elif op == "svc":
+        out += [f"const auto service = s.invoke_service({args[0]});",
+                "if (service != ServiceResult::resume) return service == ServiceResult::exit_process",
+                "    ? Status::guest_exit : Status::unsupported_service;"]
     elif op == "b":
         return [f"goto L{args[0]:x};"]
     elif op == "bl":
