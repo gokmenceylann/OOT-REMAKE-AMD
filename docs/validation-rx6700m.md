@@ -7,3 +7,5 @@ Başlatma profili 1920×1080, doğal işleme, Vulkan, 60 FPS sınırı ve Frame 
 İlk açılış iki uygulanmamış SDK importu bildirdi. Süreç çalışmaya devam etti. Çeviriden ve oyun verisinden üretilen dosyalar yerelde kaldı.
 
 [İlk kayıtlı FSR 4.1.2 Native AA oyun içi testi](fsr-first-test-rx6700m.md)
+
+[FSR 4 Quality, Frame Generation Off ve V-Sync On — Castle Town testi](fsr-quality-test-rx6700m.md)
