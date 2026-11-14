@@ -1,43 +1,30 @@
 # OOT Remake AMD
 
-Windows x64 statik yeniden derleme projesi. Oyun çalıştırma hattı sabitlenmiş Mako kaynaklarıyla yerelde derlenir. Depodaki NSO, AArch64 ve RTLD test araçları bu çalışma ortamından ayrı kullanılabilir.
+Windows x64 için yerel statik yeniden derleme projesi. Oyun, sabitlenmiş Hookshot tabanlı Mako kaynakları ve kullanıcının yerel ExeFS/RomFS dosyalarıyla derlenir. Çıktıdaki oyun EXE’si doğrudan açılır.
 
-## Doğrudan Windows derlemesi
-
-Oyun derlemesi için Hookshot tabanlı Mako çalışma ortamı bir alt modüle sabitlenmiştir. Bu hat AArch64 lifting, Horizon ve NVN2/Vulkan kodunu AMD düzeltmeleriyle birlikte kullanır. Yerel oyunu derlemek için [derleme ve lisans rehberine](docs/mako-build.md) bak.
-
-Aşağıdaki bağımsız araştırma araçları, NSO ve AArch64 davranışlarını ayrı ayrı sınamak içindir.
-
-## Yerel ExeFS
+## Oyunu yerelde derle
 
 ```powershell
-python -m pip install -r requirements.txt
-python inspect_exefs.py 'C:\Games\OOT\exefs'
-python verify_exefs.py 'C:\Games\OOT\exefs'
-python map_exefs.py 'C:\Games\OOT\exefs'
-python link_exefs.py 'C:\Games\OOT\exefs'
+git clone --recurse-submodules https://github.com/gokmenceylann/OOT-REMAKE-AMD.git
+cd OOT-REMAKE-AMD
 ```
 
-Bu komutlar sırasıyla NSO sınırlarını kontrol eder, düz/LZ4 segmentlerinin hash'lerini doğrular, BSS ile birlikte belleğe eşleyip RELR/RELA uygular ve modüller arası ABS64, GLOB_DAT, JUMP_SLOT sembollerini çözer. Kaynak oyun dosyalarına yazılmaz.
+Python, llvm-mingw ve Vulkan derleme bağımlılıklarını hazırlayıp `scripts/Build-LocalGame.ps1` komutunu çalıştır. Girdi yollarını ve derleme klasörünü komuta ver. [Windows kurulum, derleme ve lisans rehberi](docs/mako-build.md)
 
-## AArch64 ve RTLD
+## Doğrulama durumu
 
-`a64_compile.py` Capstone komutlarını tipli IR'ye çevirir. C++20 çıktısı `a64_state.hpp` ile X0–X30, SP, NZCV ve sınır denetimli belleği kullanır. [Komut kapsamı](docs/a64.md)
+Yerel Mako 4.1 derlemesi tamamlandı. Oyun işlemi açıldı, AMD Vulkan sürücüsünü yükledi ve ilk 60 saniyelik kayıtta **28,82 Present FPS** ortalaması verdi. Oyun sahnesi, fiziksel GPU seçimi, kararlı 60 FPS ve FSR bu ölçümde doğrulanmadı. [Ölçüm koşulları ve sonuçları](docs/validation-rx6700m.md)
 
-```powershell
-python lift_rtld.py 'C:\Games\OOT\exefs' entry-local.cpp --host-fill
-cl /nologo /std:c++20 /O2 /EHsc entry-local.cpp /Fe:entry-local.exe
-.\entry-local.exe
-```
+## Geliştirme
 
-Varsayılan RTLD denemesi ilk BL'de durur. `--host-fill` doğrulanmış RTLD revizyonunda ilk yordamı test belleğinde çalıştırıp bir sonraki BL'ye ulaşır. Oyundan üretilen C++ veya EXE dosyaları yerelde kalmalıdır. [RTLD ayrıntıları](docs/entry-probe.md)
+| Konum | İçerik |
+| --- | --- |
+| `scripts/` | Yerel Windows derleme komutu |
+| `upstream/mako/` | Sabitlenmiş lifter, Horizon ve NVN2/Vulkan kaynakları |
+| `docs/` | Derleme, ölçüm ve bağımsız AArch64/NSO araçları |
+| `tests/` | Python testleri, Unicorn karşılaştırması ve C++ test girdileri |
+| Kök dizindeki Python ve C++ dosyaları | Mevcut komut satırı girişleri ve bağımsız geliştirme araçları |
 
-## Testler
+[NSO, AArch64, RTLD ve test komutları](docs/development.md)
 
-```powershell
-python -m pip install -r requirements-dev.txt
-python -m unittest discover -s tests -v
-python tests/differential.py --llvm-bin 'C:\Tools\llvm-mingw\bin'
-```
-
-Karşılaştırma testi LLVM ile AArch64 test kodu oluşturur, Unicorn'dan beklenen sonuçları alır ve derlenen x64 çıktısının register, NZCV ve bellek durumunu karşılaştırır.
+Oyun dökümleri, ExeFS/RomFS, anahtarlar, üretilmiş C/C++ kodu, oyun EXE/DLL dosyaları ve shader önbellekleri yerelde tutulur. [Kaynak ve lisans bilgisi](docs/mako-build.md#kaynak-ve-lisans)

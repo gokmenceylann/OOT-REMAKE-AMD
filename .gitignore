@@ -1,6 +1,32 @@
+# Python
 __pycache__/
+.venv/
+
+# Local build and diagnostic output
+/build/
+/work/
+/local/
+/out/
+*.exe
+*.dll
+*.obj
+*.o
+*.log
+/entry-local.cpp
+/rtld-local.cpp
+/fixture.cpp
+
+# Game inputs and derived files
 *.nup
 *.nso
 *.nca
-/exefs/
-/romfs/
+*.nsp
+*.xci
+*.keys
+exefs/
+romfs/
+.hookshot_exefs/
+image.bin
+hookshot_*.bin
+hookshot_*.bin.*
+hookshot_*.idx

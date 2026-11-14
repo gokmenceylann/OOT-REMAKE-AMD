@@ -2,12 +2,24 @@
 
 Mako, Hookshot'ın AArch64 dönüştürme ve derleme altyapısını, Horizon host uygulamalarını, NVN2 ve Vulkan çizicisini, ayrıca Mako'nun AMD değişikliklerini birlikte taşır. Kaynak bağımlılığı `bef2014454a9a3e669c77cb4e6cfb4b04f362f3a` commit'ine sabitlendi. Doğrudan derlenen oyun EXE'si kullanılır.
 
-```powershell
+~~~powershell
 git submodule update --init
-.\scripts\Build-LocalGame.ps1 -ExeFS 'D:\Game\exefs' -RomFS 'D:\Game\romfs' -LocalRoot 'D:\OOT-local' -Python 'C:\Tools\Python\python.exe' -LlvmMingw 'C:\Tools\llvm-mingw' -Cpm 'C:\Tools\cpm'
-```
+& 'C:\Tools\Python\python.exe' -m pip install -r upstream/mako/requirements.txt
 
-Python ortamında `python -m pip install -r upstream/mako/requirements.txt` ile tanımlanan üst proje derleme gereksinimleri, CPM önbelleğinde Vulkan-Headers, SPIRV-Headers ve VulkanMemoryAllocator bulunmalıdır. Derleme tamamlandığında çıktıdaki oyun klasöründen `hookshot.exe` çalıştırılır. İlk çalıştırma öncesi ROMFS, modüller ve derleme çıktıları yerelde kalır.
+.\scripts\Build-LocalGame.ps1 `
+    -ExeFS 'D:\Game\exefs' -RomFS 'D:\Game\romfs' `
+    -LocalRoot 'D:\OOT-local' -Python 'C:\Tools\Python\python.exe' `
+    -LlvmMingw 'C:\Tools\llvm-mingw' -Cpm 'C:\Tools\cpm'
+~~~
+
+Python ortamında `python -m pip install -r upstream/mako/requirements.txt` ile tanımlanan üst proje derleme gereksinimleri, CPM önbelleğinde Vulkan-Headers, SPIRV-Headers ve VulkanMemoryAllocator bulunmalıdır. Derleme tamamlandığında dosyayı build kökündeki `game` klasöründen çalıştır. Komuttaki dosya yolları örnektir. Derleme çıktısını kaynak deposu dışında tut.
+
+~~~powershell
+Set-Location 'D:\OOT-local\game'
+.\hookshot.exe
+~~~
+
+[İlk yerel ölçüm](validation-rx6700m.md)
 
 ## Kaynak ve lisans
 
