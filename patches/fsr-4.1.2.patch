@@ -116,7 +116,7 @@ index 77e5a80..7cf783a 100644
      // (every 600 frames: that it still draws, and the jitter it was given, which says the host's jitter is on)
      if (++o.drawn % 600 == 0)
 diff --git a/gpu/vk/vk_fsr4.cpp b/gpu/vk/vk_fsr4.cpp
-index 2a34a9c..c1801ff 100644
+index 2a34a9c..df7035c 100644
 --- a/gpu/vk/vk_fsr4.cpp
 +++ b/gpu/vk/vk_fsr4.cpp
 @@ -25,6 +25,7 @@
@@ -127,7 +127,15 @@ index 2a34a9c..c1801ff 100644
  #include <vector>
  #ifndef _WIN32
  #include <dlfcn.h>
-@@ -55,6 +56,8 @@ int env_switch(const char* name) {   // (-1: unset)
+@@ -33,6 +34,7 @@
+ 
+ #include "vk_paths.h"
+ #include "vk_texture.h"
++#include "vk_gprof.h"
+ 
+ #include "api/include/ffx_api.h"
+ #include "api/include/ffx_api_types.h"
+@@ -55,6 +57,8 @@ int env_switch(const char* name) {   // (-1: unset)
  std::atomic<int> g_why{-1};
  }  // namespace
  
@@ -136,7 +144,7 @@ index 2a34a9c..c1801ff 100644
  FsrWhy fsr4_why() {
      if (!fsr4_built()) return FSR_NOT_BUILT;
      static const bool env_off = env_switch("RX_VK_FSR4") == 0;
-@@ -99,6 +102,9 @@ Library& lib() {
+@@ -99,6 +103,9 @@ Library& lib() {
  struct Context {
      ffxCreateBackendVKDesc backend{};
      ffxOverrideVersion version{};
@@ -146,7 +154,7 @@ index 2a34a9c..c1801ff 100644
  #ifndef _WIN32
      ffxCreateBackendVKDesc_DEPRECATED legacy_backend{};   // (linux) the backend description a Vulkan FSR 4 build like fsr4-vk reads
  #endif
-@@ -106,14 +112,22 @@ struct Context {
+@@ -106,14 +113,22 @@ struct Context {
      ffxContext context = nullptr;
      uint32_t width = 0, height = 0;   // (its output, which is also the most the render size can be)
      uint64_t memory = 0;              // (what AMD's library says it holds)
@@ -170,7 +178,7 @@ index 2a34a9c..c1801ff 100644
      uint32_t in_w = 0, in_h = 0;   // (the inputs' size under this context: the largest render size it has had)
      std::chrono::steady_clock::time_point last{};
      uint64_t evals = 0;
-@@ -203,6 +217,10 @@ bool load() {
+@@ -203,6 +218,10 @@ bool load() {
          return no(FSR_NO_LIBRARY);
      }
      l.device_context = VkDeviceContext{dev.device, dev.physical, vkGetDeviceProcAddr};
@@ -181,7 +189,7 @@ index 2a34a9c..c1801ff 100644
      // (the library lists every upscaler this device can run: the newest 4.x is taken explicitly, so an FSR 3.1 provider never
      // stands in silently)
      ffxQueryDescGetVersions versions{};
-@@ -229,7 +247,11 @@ bool load() {
+@@ -229,7 +248,11 @@ bool load() {
          const char* name = names[i] ? names[i] : "";
          listed += (listed.empty() ? "" : ", ") + std::string(name);
          unsigned v[3] = {0, 0, 0};
@@ -194,7 +202,7 @@ index 2a34a9c..c1801ff 100644
          // (the first of equal versions: a Vulkan FSR 4 build lists its Auto, which picks the GPU's model, before INT8 and FP8)
          if (v[0] == 4 && (!l.version_id || v[1] > best[1] || (v[1] == best[1] && v[2] > best[2]))) {
              std::memcpy(best, v, sizeof best);
-@@ -246,13 +268,132 @@ bool load() {
+@@ -246,13 +269,132 @@ bool load() {
      return true;
  }
  
@@ -328,7 +336,7 @@ index 2a34a9c..c1801ff 100644
      c->version.header.type = FFX_API_DESC_TYPE_OVERRIDE_VERSION;
      c->version.versionId = l.version_id;
      c->backend.header.pNext = &c->version.header;
-@@ -266,22 +407,40 @@ std::shared_ptr<Context> make_context(uint32_t w, uint32_t h) {
+@@ -266,22 +408,40 @@ std::shared_ptr<Context> make_context(uint32_t w, uint32_t h) {
      c->version.header.pNext = &c->legacy_backend.header;
  #endif
      c->upscale.header.type = FFX_API_CREATE_CONTEXT_DESC_TYPE_UPSCALE;
@@ -375,7 +383,7 @@ index 2a34a9c..c1801ff 100644
      FfxApiEffectMemoryUsage usage{};
      ffxQueryDescUpscaleGetGPUMemoryUsage mem{};
      mem.header.type = FFX_API_QUERY_DESC_TYPE_UPSCALE_GPU_MEMORY_USAGE;
-@@ -290,7 +449,25 @@ std::shared_ptr<Context> make_context(uint32_t w, uint32_t h) {
+@@ -290,7 +450,25 @@ std::shared_ptr<Context> make_context(uint32_t w, uint32_t h) {
      ffxQueryGetProviderVersion provider{};
      provider.header.type = FFX_API_QUERY_DESC_TYPE_GET_PROVIDER_VERSION;
      const bool known = l.query(&c->context, &provider.header) == FFX_API_RETURN_OK && provider.versionName;
@@ -402,7 +410,7 @@ index 2a34a9c..c1801ff 100644
           known ? provider.versionName : "?", w, h, (unsigned long long)texture_frame_no(), made_ms,
           (unsigned long long)(c->memory >> 20));
      return c;
-@@ -318,8 +495,7 @@ void barriers(VkCommandBuffer cmd, const VkImageMemoryBarrier2* b, uint32_t n) {
+@@ -318,8 +496,7 @@ void barriers(VkCommandBuffer cmd, const VkImageMemoryBarrier2* b, uint32_t n) {
      vkCmdPipelineBarrier2(cmd, &di);
  }
  
@@ -412,7 +420,7 @@ index 2a34a9c..c1801ff 100644
  bool unit_exposure(VkCommandBuffer cmd, TemporalImage& out) {
      static VkImage image = VK_NULL_HANDLE;
      static VmaAllocation allocation{};
-@@ -345,7 +521,6 @@ bool unit_exposure(VkCommandBuffer cmd, TemporalImage& out) {
+@@ -345,7 +522,6 @@ bool unit_exposure(VkCommandBuffer cmd, TemporalImage& out) {
      }
      return true;
  }
@@ -420,7 +428,7 @@ index 2a34a9c..c1801ff 100644
  
  // ---- the engine (vk_temporal.h TemporalEngine) ----
  
-@@ -354,18 +529,37 @@ bool start() { return load(); }
+@@ -354,18 +530,37 @@ bool start() { return load(); }
  void release() {
      State& s = st();
      if (!s.context) return;
@@ -465,7 +473,7 @@ index 2a34a9c..c1801ff 100644
          s.in_w = s.in_h = 0;
          made = 2;
      }
-@@ -379,10 +573,8 @@ int prepare(VkCommandBuffer, uint32_t rw, uint32_t rh, uint32_t ow, uint32_t oh,
+@@ -379,10 +574,8 @@ int prepare(VkCommandBuffer, uint32_t rw, uint32_t rh, uint32_t ow, uint32_t oh,
  bool evaluate(VkCommandBuffer cmd, const TemporalFrame& f) {
      State& s = st();
      Library& l = lib();
@@ -476,7 +484,7 @@ index 2a34a9c..c1801ff 100644
      const auto now = std::chrono::steady_clock::now();
      const float frame_ms = s.evals ? std::chrono::duration<float, std::milli>(now - s.last).count() : 1000.0f / 30.0f;
      s.last = now;
-@@ -402,9 +594,7 @@ bool evaluate(VkCommandBuffer cmd, const TemporalFrame& f) {
+@@ -402,9 +595,7 @@ bool evaluate(VkCommandBuffer cmd, const TemporalFrame& f) {
      d.depth = resource(f.depth, VK_IMAGE_USAGE_SAMPLED_BIT, FFX_API_RESOURCE_STATE_COMPUTE_READ);
      d.motionVectors = resource(f.motion, VK_IMAGE_USAGE_SAMPLED_BIT, FFX_API_RESOURCE_STATE_COMPUTE_READ);
      d.output = resource(f.output, VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, FFX_API_RESOURCE_STATE_UNORDERED_ACCESS);
@@ -487,7 +495,18 @@ index 2a34a9c..c1801ff 100644
      d.jitterOffset = {f.jitter[0], f.jitter[1]};   // (render pixels, as the projection was offset: the same as DLSS's)
      d.motionVectorScale = {1.0f, 1.0f};             // (render pixels already, towards the frame before)
      d.renderSize = {f.render_w, f.render_h};
-@@ -430,6 +620,12 @@ bool evaluate(VkCommandBuffer cmd, const TemporalFrame& f) {
+@@ -417,8 +608,10 @@ bool evaluate(VkCommandBuffer cmd, const TemporalFrame& f) {
+     d.cameraNear = f.near_z, d.cameraFar = f.far_z, d.cameraFovAngleVertical = f.fov_y;
+     d.viewSpaceToMetersFactor = 1.0f;
+     d.flags = FFX_UPSCALE_FLAG_NON_LINEAR_COLOR_SRGB;
++    const bool timed = gprof_begin(cmd);
+     ::mkwvk::rec::boundary(::mkwvk::rec::B_DIRECT);   // (ffxDispatch records into cmd itself: what this thread recorded through vk_work.h reaches cmd first)
+     const ffxReturnCode_t r = l.dispatch(&s.context->context, &d.header);
++    if (timed) gprof_end(cmd, "FSR 4 SDK dispatch");
+     note_work();   // (AMD's dispatches: full_barrier must not take the next barrier for a repeat of the one before them)
+ 
+     const VkImageMemoryBarrier2 out[4] = {barrier(f.color.image, VK_ACCESS_2_SHADER_READ_BIT, any, R, G),
+@@ -430,6 +623,12 @@ bool evaluate(VkCommandBuffer cmd, const TemporalFrame& f) {
          logf("vk: AMD FSR 4: its dispatch failed (%d)", (int)r);
          return false;
      }
