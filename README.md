@@ -7,6 +7,12 @@ python inspect_exefs.py 'C:\Games\OOT\exefs'
 python -m unittest -v
 ```
 
-Araç kaynak oyun dosyalarına yazmaz ve yalnızca başlık metadatasını raporlar. Segment hash doğrulaması, açma, relocation, AArch64 çevirisi, Horizon servisleri ve NVN2 çizimi bu sürümün kapsamında değildir. **Bu sürüm Zelda'yı başlatmaz.** Depo Nintendo içeriği veya anahtarı içermez.
+Araç kaynak oyun dosyalarına yazmaz ve yalnızca başlık metadatasını raporlar. Ek araç, düz veya LZ4 sıkıştırmalı segmentleri bellekte açıp sağlanan SHA-256 değerlerini denetler. ZBIC, relocation, AArch64 çevirisi, Horizon servisleri ve NVN2 çizimi bu sürümün kapsamında değildir. **Bu sürüm Zelda'yı başlatmaz.** Depo Nintendo içeriği veya anahtarı içermez.
 
 [NSO başlık referansı](https://github.com/switchbrew/switch-tools/blob/master/src/elf2nso.c)
+
+```powershell
+python -m pip install -r requirements.txt
+python verify_exefs.py 'C:\Games\OOT\exefs'
+python -m unittest -v
+```
