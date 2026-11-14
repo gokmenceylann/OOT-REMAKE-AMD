@@ -4,7 +4,8 @@ fixture:
     stp x30, xzr, [sp, #-16]!
     subs w0, w0, #1
     b.eq zero
-    bl nested
+    adr x8, nested
+    blr x8
     ldp x30, xzr, [sp], #16
     ret
 zero:
@@ -17,7 +18,15 @@ nested:
     lsl w10, w9, #1
     lsr w11, w10, #3
     asr w12, w9, #4
-    strb w0, [x1]
-    ldrb w2, [x1]
+    rbit w15, w9
+    clz w16, w15
+    lsr w17, w15, w16
+    bic w18, w17, w9
+    mov w13, #1
+    sub x14, x1, #1
+    strb w0, [x14, w13, uxtw]
+    mov w13, #-1
+    add x14, x1, #1
+    ldrb w2, [x14, w13, sxtw]
     add w0, w2, #1
     ret

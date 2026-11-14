@@ -4,6 +4,8 @@ from dataclasses import dataclass
 from pathlib import Path
 import re
 
+from a64_analyze import analyze
+
 from capstone import Cs, CS_ARCH_ARM64, CS_MODE_ARM
 
 
@@ -20,6 +22,9 @@ class Mem:
     offset: int
     writeback: bool = False
     post: bool = False
+    index: Reg | None = None
+    extension: str = ''
+    shift: int = 0
 
 
 @dataclass(frozen=True)
@@ -55,7 +60,7 @@ CONDITIONS = {
     "ge": "n == v", "lt": "n != v", "gt": "!z && n == v", "le": "z || n != v",
 }
 ARITHMETIC = {"add", "adds", "sub", "subs", "cmp", "cmn"}
-LOGICAL = {"and", "ands", "orr", "eor", "tst"}
+LOGICAL = {"and", "ands", "orr", "eor", "tst", "bic", "bics"}
 MEMORY = {
     "ldr": 0, "ldur": 0, "str": 0, "stur": 0,
     "ldrb": 1, "ldurb": 1, "strb": 1, "sturb": 1,
@@ -72,6 +77,14 @@ def lower(op, text):
             dest = Reg(31, lhs.width, True) if compare else register(tokens[0])
             if dest.width == lhs.width and (not isinstance(rhs, Reg) or rhs.width == lhs.width):
                 return dest, lhs, rhs
+    elif op in ("clz", "rbit", "neg") and len(tokens) == 2:
+        dest, src = map(register, tokens)
+        if dest.width == src.width:
+            return dest, src
+    elif op in ("madd", "msub") and len(tokens) == 4:
+        regs = tuple(map(register, tokens))
+        if all(reg.width == regs[0].width for reg in regs):
+            return regs
     elif op == "mov" and len(tokens) == 2:
         dest, src = register(tokens[0]), value(tokens[1])
         if not isinstance(src, Reg) or src.width == dest.width:
@@ -86,13 +99,23 @@ def lower(op, text):
             return dest, imm, shift
     elif op in ("lsl", "lsr", "asr") and len(tokens) == 3:
         dest, source = map(register, tokens[:2])
-        count = immediate(tokens[2])
-        if dest.width == source.width and 0 <= count < dest.width:
+        count = value(tokens[2])
+        valid = count.width == dest.width if isinstance(count, Reg) else 0 <= count < dest.width
+        if dest.width == source.width and valid:
             return dest, source, count
     elif op in ("ldp", "stp") or op in MEMORY:
         pair = op in ("ldp", "stp")
         registers = r"(\w+), (\w+), " if pair else r"(\w+), "
         number = r"#-?(?:0x[0-9a-f]+|[0-9]+)"
+        if not pair:
+            indexed = re.fullmatch(r"(\w+), \[(\w+), (\w+)(?:, (lsl|uxtw|sxtw|sxtx)(?:,? #([0-9]+))?)?\]", text)
+            if indexed:
+                dest, base, index = map(register, indexed.groups()[:3])
+                extension, shift = indexed.groups()[3:]
+                extension = extension or "lsl"
+                if (base.width == 64 and not base.zero and
+                        index.width == (32 if extension.endswith("tw") else 64) and int(shift or 0) < 64):
+                    return dest, Mem(base, 0, index=index, extension=extension, shift=int(shift or 0))
         match = re.fullmatch(registers + rf"\[(\w+)(?:, ({number}))?\](!|, {number})?", text)
         if match:
             *regs, base, offset, suffix = match.groups()
@@ -112,10 +135,14 @@ def lower(op, text):
     elif op in ("b", "bl") or (op.startswith("b.") and op[2:] in CONDITIONS):
         if len(tokens) == 1:
             return (immediate(tokens[0]),)
+    elif op in ("tbz", "tbnz") and len(tokens) == 3:
+        return register(tokens[0]), immediate(tokens[1]), immediate(tokens[2])
     elif op in ("cbz", "cbnz") and len(tokens) == 2:
         return register(tokens[0]), immediate(tokens[1])
     elif op in ("adr", "adrp") and len(tokens) == 2:
         return register(tokens[0]), immediate(tokens[1])
+    elif op in ("br", "blr") and len(tokens) == 1:
+        return (register(tokens[0]),)
     elif op == "ret" and len(tokens) <= 1:
         return (register(tokens[0] if tokens else "x30"),)
     elif op == "nop" and not tokens:
@@ -123,12 +150,12 @@ def lower(op, text):
     raise ValueError(f"unsupported form: {op} {text}")
 
 
-def decode(code, base=0, reachable=False, stop_calls=False, host_fill=None):
+def decode(code, base=0, reachable=False, stop_calls=False, host_fill=None, selected=None):
     if not code or len(code) % 4 or base % 4 or not 0 <= base <= (1 << 64) - len(code) - 4:
         raise ValueError("expected aligned guest base and complete instruction words")
     decoder = Cs(CS_ARCH_ARM64, CS_MODE_ARM)
     result = []
-    offsets = [0] if reachable else list(range(0, len(code), 4))
+    offsets = [pc - base for pc in selected] if selected is not None else ([0] if reachable else list(range(0, len(code), 4)))
     seen = set()
     while offsets:
         offset = offsets.pop()
@@ -147,7 +174,7 @@ def decode(code, base=0, reachable=False, stop_calls=False, host_fill=None):
             raise ValueError(f"{pc:#x}: {exc}") from exc
         result.append(Instruction(pc, ins.mnemonic, args))
         if reachable and ins.mnemonic != "ret":
-            direct = ins.mnemonic in ("b", "bl", "cbz", "cbnz") or ins.mnemonic.startswith("b.")
+            direct = ins.mnemonic in ("b", "bl", "cbz", "cbnz", "tbz", "tbnz") or ins.mnemonic.startswith("b.")
             if direct:
                 if not stop_calls or ins.mnemonic == "b":
                     offsets.append(args[-1] - base)
@@ -157,7 +184,7 @@ def decode(code, base=0, reachable=False, stop_calls=False, host_fill=None):
     result.sort(key=lambda ins: ins.pc)
     addresses = {ins.pc for ins in result}
     for ins in result:
-        if ins.op in ("b", "bl", "cbz", "cbnz") or ins.op.startswith("b."):
+        if ins.op in ("b", "bl", "cbz", "cbnz", "tbz", "tbnz") or ins.op.startswith("b."):
             if ins.op == "bl" and stop_calls:
                 if ins.args[0] < base or ins.args[0] >= base + len(code) or ins.args[0] % 4:
                     raise ValueError(f"{ins.pc:#x}: invalid call target")
@@ -196,23 +223,49 @@ def emit(ins, last, addresses, stop_calls, host_fill):
         dest, lhs, rhs = args
         width = dest.width
         operator = ("+" if op in ("add", "adds", "cmn") else "-" if op in ("sub", "subs", "cmp")
-                    else "&" if op in ("and", "ands", "tst") else "|" if op == "orr" else "^")
+                    else "&" if op in ("and", "ands", "tst", "bic", "bics") else "|" if op == "orr" else "^")
+        rhs_expr = ("~" if op in ("bic", "bics") else "") + read(rhs)
         out.extend([f"const auto a = std::uint{width}_t({read(lhs)});",
-                    f"const auto b = std::uint{width}_t({read(rhs)});",
+                    f"const auto b = std::uint{width}_t({rhs_expr});",
                     f"const auto r = std::uint{width}_t(a {operator} b);"])
-        if op in ("adds", "cmn", "subs", "cmp", "ands", "tst"):
+        if op in ("adds", "cmn", "subs", "cmp", "ands", "tst", "bics"):
             out.append(f"s.set_flags(a, b, r, {width}, '{operator}');")
         out += write(dest, "r")
-        if not dest.zero or op in ("adds", "cmn", "subs", "cmp", "ands", "tst"):
+        if not dest.zero or op in ("adds", "cmn", "subs", "cmp", "ands", "tst", "bics"):
             return out + (["return Status::fell_through;"] if last else [])
         out = []
+    elif op in ("madd", "msub"):
+        dest, a, b, c = args
+        operator = "+" if op == "madd" else "-"
+        out += write(dest, f"{read(c)} {operator} ({read(a)} * {read(b)})")
     elif op in ("mov", "adr", "adrp"):
         out += write(args[0], read(args[1]))
+    elif op == "neg":
+        out += write(args[0], f"0ULL - {read(args[1])}")
+    elif op == "rbit":
+        dest, source = args
+        out += [f"auto input = {read(source)};", "std::uint64_t reversed = 0;",
+                f"for (unsigned bit = 0; bit < {dest.width}; ++bit) {{",
+                "    reversed = (reversed << 1) | (input & 1);",
+                "    input >>= 1;",
+                "}"]
+        out += write(dest, "reversed")
+    elif op == "clz":
+        dest, source = args
+        out += write(dest, f"std::countl_zero(std::uint{dest.width}_t({read(source)}))")
     elif op == "movk":
         dest, imm, shift = args
         out += write(dest, f"({read(dest)} & ~{literal(65535 << shift)}) | {literal(imm << shift)}")
     elif op in ("lsl", "lsr", "asr"):
         dest, source, count = args
+        if isinstance(count, Reg):
+            amount = f"({read(count)} & {dest.width - 1})"
+            if op == "asr":
+                expr = f"(std::int{dest.width}_t({read(source)}) >> {amount})"
+            else:
+                expr = f"{read(source)} {'<<' if op == 'lsl' else '>>'} {amount}"
+            out += write(dest, expr)
+            return out + (["return Status::fell_through;"] if last else [])
         if op == "asr":
             sign = f"({read(source)} >> {dest.width - 1})"
             mask = literal(((1 << count) - 1) << (dest.width - count))
@@ -223,7 +276,13 @@ def emit(ins, last, addresses, stop_calls, host_fill):
     elif op in ("ldp", "stp") or op in MEMORY:
         *regs, mem = args
         size = MEMORY.get(op, 0) or regs[0].width // 8
-        out.append(f"const auto updated = {read(mem.base)} + {literal(mem.offset)};")
+        delta = literal(mem.offset)
+        if mem.index is not None:
+            index = read(mem.index)
+            if mem.extension == "sxtw":
+                index = f"(std::uint64_t({index}) - ((std::uint64_t({index}) >> 31) << 32))"
+            delta = f"(std::uint64_t({index}) << {mem.shift})"
+        out.append(f"const auto updated = {read(mem.base)} + {delta};")
         out.append(f"const auto address = {read(mem.base) if mem.post else 'updated'};")
         out.append(f"if (!s.contains(address, {size * len(regs)})) return Status::memory_fault;")
         for index, dest in enumerate(regs):
@@ -245,11 +304,17 @@ def emit(ins, last, addresses, stop_calls, host_fill):
         if stop_calls:
             return [link, f"s.stop_target = {literal(args[0])};", "return Status::external_branch;"]
         return [link, jump(args[0])]
-    elif op == "ret":
-        return [f"target = {read(args[0])};", "goto indirect;"]
+    elif op in ("ret", "br", "blr"):
+        out = [f"target = {read(args[0])};"]
+        if op == "blr":
+            out.append(f"s.x[30] = {literal(ins.pc + 4)};")
+        return out + ["goto indirect;"]
     elif op.startswith("b."):
         expr = re.sub(r"\b[nzcv]\b", lambda m: "s." + m[0], CONDITIONS[op[2:]])
         out.append(f"if ({expr}) {jump(args[0])}")
+    elif op in ("tbz", "tbnz"):
+        comparison = "==" if op == "tbz" else "!="
+        out.append(f"if ((({read(args[0])} >> {args[1]}) & 1) {comparison} 0) {jump(args[2])}")
     elif op in ("cbz", "cbnz"):
         comparison = "==" if op == "cbz" else "!="
         out.append(f"if ({read(args[0])} {comparison} 0) {jump(args[1])}")
@@ -258,19 +323,28 @@ def emit(ins, last, addresses, stop_calls, host_fill):
     return out
 
 
-def compile_block(code, base=0, *, stop_calls=False, host_fill=None):
-    ir = decode(code, base, reachable=stop_calls, stop_calls=stop_calls, host_fill=host_fill)
+def compile_block(code, base=0, *, stop_calls=False, host_fill=None, entry=None, targets=()):
+    selected = None
+    if entry is not None:
+        graph = analyze(code, [entry, *targets], base)
+        if entry not in graph or not graph[entry]["instructions"]:
+            raise ValueError("entry outside decoded text")
+        selected = {pc for node in graph.values() for pc in node["instructions"]}
+    ir = decode(code, base, reachable=stop_calls, stop_calls=stop_calls, host_fill=host_fill, selected=selected)
     addresses = {ins.pc for ins in ir}
-    has_return = any(ins.op == "ret" for ins in ir)
-    lines = ['#include "a64_state.hpp"', "Status run_a64(A64State& s, std::uint64_t budget, [[maybe_unused]] std::uint64_t return_address) {"]
+    has_return = any(ins.op in ("ret", "br", "blr") for ins in ir)
+    lines = ['#include "a64_state.hpp"', '#include <bit>', "Status run_a64(A64State& s, std::uint64_t budget, [[maybe_unused]] std::uint64_t return_address) {"]
     if has_return:
         lines.append("    std::uint64_t target = 0;")
     targets = {ins.pc for ins in ir} if has_return else {
-        ins.args[-1] for ins in ir if ins.op in ("b", "bl", "cbz", "cbnz") or ins.op.startswith("b.")
+        ins.args[-1] for ins in ir if ins.op in ("b", "bl", "cbz", "cbnz", "tbz", "tbnz") or ins.op.startswith("b.")
     }
     targets &= addresses
     if stop_calls and not has_return:
         targets = {ins.args[-1] for ins in ir if ins.op != 'bl' and (ins.op in ('b', 'cbz', 'cbnz') or ins.op.startswith('b.'))} & addresses
+    if entry is not None:
+        targets.add(entry)
+        lines.append(f"    goto L{entry:x};")
     for i, ins in enumerate(ir):
         if ins.pc in targets:
             lines.append(f"L{ins.pc:x}:")
@@ -281,7 +355,7 @@ def compile_block(code, base=0, *, stop_calls=False, host_fill=None):
         lines += ["indirect:", "    if (target == return_address) return Status::returned;",
                   "    switch (target) {"]
         lines += [f"    case {literal(ins.pc)}: goto L{ins.pc:x};" for ins in ir]
-        lines += ["    default: return Status::bad_return;", "    }"]
+        lines += ["    default: s.stop_target = target; return Status::bad_return;", "    }"]
     return "\n".join(lines + ["}", ""])
 
 
@@ -290,9 +364,11 @@ if __name__ == "__main__":
     parser.add_argument("input", type=Path)
     parser.add_argument("output", type=Path)
     parser.add_argument("--base", type=lambda s: int(s, 0), default=0)
+    parser.add_argument("--entry", type=lambda s: int(s, 0))
+    parser.add_argument("--target", action="append", type=lambda s: int(s, 0), default=[])
     args = parser.parse_args()
     try:
-        source = compile_block(args.input.read_bytes(), args.base)
+        source = compile_block(args.input.read_bytes(), args.base, entry=args.entry, targets=args.target)
         with args.output.open("x", encoding="utf-8") as file:
             file.write(source)
     except (OSError, ValueError) as exc:

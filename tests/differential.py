@@ -6,6 +6,7 @@ import subprocess
 import shutil
 import sys
 import tempfile
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from unicorn import Uc, UC_ARCH_ARM64, UC_MODE_ARM
 from unicorn import arm64_const as arm
@@ -53,6 +54,15 @@ def check(code, initial):
 """
 
 
+def code_target(code):
+    from capstone import Cs, CS_ARCH_ARM64, CS_MODE_ARM
+    decoder = Cs(CS_ARCH_ARM64, CS_MODE_ARM)
+    for instruction in decoder.disasm(code, 0):
+        if instruction.mnemonic == "adr":
+            return int(instruction.op_str.split("#", 1)[1], 0)
+    raise ValueError("test fixture has no indirect target")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--llvm-bin", type=Path)
@@ -71,7 +81,8 @@ def main():
         obj, binary, cpp = (temp / name for name in ("fixture.o", "fixture.bin", "generated.cpp"))
         run("clang" + suffix, "--target=aarch64-none-elf", "-c", str(ROOT / "tests/tests_a64.S"), "-o", str(obj))
         run("llvm-objcopy" + suffix, "-O", "binary", "--only-section=.text", str(obj), str(binary))
-        run(sys.executable, str(ROOT / "a64_compile.py"), str(binary), str(cpp), "--base", hex(BASE))
+        run(sys.executable, str(ROOT / "a64_compile.py"), str(binary), str(cpp), "--base", hex(BASE),
+            "--entry", hex(BASE), "--target", hex(BASE + code_target(binary.read_bytes())))
         cases = (0, 1, 2, 0x80000000, 0x100000103, 0xffffffffffffffff)
         code = binary.read_bytes()
         harness = temp / "oracle.cpp"
