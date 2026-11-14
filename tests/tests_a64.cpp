@@ -5,7 +5,7 @@ int main() {
         A64State state;
         state.memory = ram;
         state.memory_base = 0x2000;
-        state.x[31] = 0x2000;
+        state.x[31] = 0x2010;
         state.x[1] = 0x2010;
         return state;
     };
@@ -18,7 +18,7 @@ int main() {
     if (run_a64(branch, 30) != Status::returned || branch.x[0] != 42 || !branch.z)
         return 2;
     auto fault = fresh();
-    fault.x[31] = 0x201c;
+    fault.x[31] = 0x2008;
     if (run_a64(fault, 30) != Status::memory_fault || run_a64(branch, 0) != Status::budget_exhausted)
         return 3;
     auto bad = fresh();

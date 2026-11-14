@@ -18,6 +18,8 @@ class Reg:
 class Mem:
     base: Reg
     offset: int
+    writeback: bool = False
+    post: bool = False
 
 
 @dataclass(frozen=True)
@@ -74,13 +76,39 @@ def lower(op, text):
         dest, src = register(tokens[0]), value(tokens[1])
         if not isinstance(src, Reg) or src.width == dest.width:
             return dest, src
-    elif op in MEMORY:
-        match = re.fullmatch(r"(\w+), \[(\w+)(?:, (#-?(?:0x[0-9a-f]+|[0-9]+)))?\]", text)
+    elif op == "movk" and len(tokens) in (2, 3):
+        dest = register(tokens[0])
+        shift = immediate(tokens[2].removeprefix("lsl ")) if len(tokens) == 3 else 0
+        imm = immediate(tokens[1])
+        if len(tokens) == 3 and not tokens[2].startswith("lsl "):
+            raise ValueError("unsupported MOVK modifier")
+        if shift % 16 == 0 and 0 <= shift < dest.width and 0 <= imm <= 65535:
+            return dest, imm, shift
+    elif op in ("lsl", "lsr", "asr") and len(tokens) == 3:
+        dest, source = map(register, tokens[:2])
+        count = immediate(tokens[2])
+        if dest.width == source.width and 0 <= count < dest.width:
+            return dest, source, count
+    elif op in ("ldp", "stp") or op in MEMORY:
+        pair = op in ("ldp", "stp")
+        registers = r"(\w+), (\w+), " if pair else r"(\w+), "
+        number = r"#-?(?:0x[0-9a-f]+|[0-9]+)"
+        match = re.fullmatch(registers + rf"\[(\w+)(?:, ({number}))?\](!|, {number})?", text)
         if match:
-            dest, base, offset = match.groups()
-            dest, base = register(dest), register(base)
-            if base.width == 64 and not base.zero:
-                return dest, Mem(base, immediate(offset) if offset else 0)
+            *regs, base, offset, suffix = match.groups()
+            regs = tuple(map(register, regs))
+            base = register(base)
+            post = bool(suffix and suffix.startswith(", "))
+            if base.width != 64 or base.zero or (post and offset):
+                raise ValueError("invalid memory addressing")
+            if any(reg.width != regs[0].width for reg in regs):
+                raise ValueError("mismatched pair widths")
+            if suffix and any(reg == base or (reg.index == base.index and not reg.zero) for reg in regs):
+                raise ValueError("unsupported base/register writeback overlap")
+            if op == "ldp" and regs[0] == regs[1] and not regs[0].zero:
+                raise ValueError("unsupported overlapping LDP destinations")
+            delta = immediate(suffix[2:]) if post else immediate(offset) if offset else 0
+            return (*regs, Mem(base, delta, bool(suffix), post))
     elif op in ("b", "bl") or (op.startswith("b.") and op[2:] in CONDITIONS):
         if len(tokens) == 1:
             return (immediate(tokens[0]),)
@@ -180,15 +208,34 @@ def emit(ins, last, addresses, stop_calls, host_fill):
         out = []
     elif op in ("mov", "adr", "adrp"):
         out += write(args[0], read(args[1]))
-    elif op in MEMORY:
-        dest, mem = args
-        size = MEMORY[op] or dest.width // 8
-        out.append(f"const auto address = {read(mem.base)} + {literal(mem.offset)};")
-        if op.startswith("ld"):
-            out += ["std::uint64_t data;", f"if (!s.load(address, {size}, data)) return Status::memory_fault;"]
-            out += write(dest, "data")
+    elif op == "movk":
+        dest, imm, shift = args
+        out += write(dest, f"({read(dest)} & ~{literal(65535 << shift)}) | {literal(imm << shift)}")
+    elif op in ("lsl", "lsr", "asr"):
+        dest, source, count = args
+        if op == "asr":
+            sign = f"({read(source)} >> {dest.width - 1})"
+            mask = literal(((1 << count) - 1) << (dest.width - count))
+            expr = f"({read(source)} >> {count}) | ((0ULL - {sign}) & {mask})"
         else:
-            out.append(f"if (!s.store(address, {size}, {read(dest)})) return Status::memory_fault;")
+            expr = f"{read(source)} {'<<' if op == 'lsl' else '>>'} {count}"
+        out += write(dest, expr)
+    elif op in ("ldp", "stp") or op in MEMORY:
+        *regs, mem = args
+        size = MEMORY.get(op, 0) or regs[0].width // 8
+        out.append(f"const auto updated = {read(mem.base)} + {literal(mem.offset)};")
+        out.append(f"const auto address = {read(mem.base) if mem.post else 'updated'};")
+        out.append(f"if (!s.contains(address, {size * len(regs)})) return Status::memory_fault;")
+        for index, dest in enumerate(regs):
+            location = f"address + {size * index}"
+            if op.startswith("ld"):
+                temp = f"data{index}"
+                out += [f"std::uint64_t {temp};", f"if (!s.load({location}, {size}, {temp})) return Status::memory_fault;"]
+                out += write(dest, temp)
+            else:
+                out.append(f"if (!s.store({location}, {size}, {read(dest)})) return Status::memory_fault;")
+        if mem.writeback:
+            out += write(mem.base, "updated")
     elif op == "b":
         return [f"goto L{args[0]:x};"]
     elif op == "bl":

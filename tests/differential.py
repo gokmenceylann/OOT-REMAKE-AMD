@@ -28,7 +28,7 @@ def oracle(code, x0):
         raise RuntimeError("guest did not return")
     regs = [cpu.reg_read(reg) for reg in REGS]
     flags = cpu.reg_read(arm.UC_ARM64_REG_NZCV) >> 28
-    return regs, flags, bytes(cpu.mem_read(RAM, 32))
+    return regs, flags, bytes(cpu.mem_read(RAM - 16, 48))
 
 
 def check(code, initial):
@@ -38,9 +38,9 @@ def check(code, initial):
     return f"""
     {{
         A64State s;
-        std::array<std::uint8_t, 32> ram{{}};
+        std::array<std::uint8_t, 48> ram{{}};
         s.memory = ram;
-        s.memory_base = {RAM};
+        s.memory_base = {RAM - 16};
         s.x[0] = {initial}ULL;
         s.x[1] = {RAM + 16};
         s.x[30] = {RETURN};
@@ -48,7 +48,7 @@ def check(code, initial):
         if (run_a64(s, 64, {RETURN}) != Status::returned) return 1;
         if (s.x != std::array<std::uint64_t, 32>{{{regs}}}) return 2;
         if ((8 * s.n + 4 * s.z + 2 * s.c + s.v) != {flags}) return 3;
-        if (ram != std::array<std::uint8_t, 32>{{{memory}}}) return 4;
+        if (ram != std::array<std::uint8_t, 48>{{{memory}}}) return 4;
     }}
 """
 
