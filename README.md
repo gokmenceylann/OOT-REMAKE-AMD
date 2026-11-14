@@ -29,3 +29,5 @@ Release assets contain setup documentation and a Windows preflight tool. The por
 [Changelog](CHANGELOG.md) · [Contributing](CONTRIBUTING.md) · [Release process](docs/release.md) · [GPLv3 license text](LICENSE) · [Third-party notices](THIRD-PARTY.md)
 
 This is an independent project. Nintendo game content, keys, game-derived executables and generated game assets are kept local. Use files you are entitled to use. Preserve upstream and SDK license notices.
+
+[AMD compatibility and 60 FPS test plan](docs/amd-compatibility.md)

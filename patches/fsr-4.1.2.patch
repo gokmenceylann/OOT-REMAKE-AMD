@@ -38,6 +38,30 @@ index 318430e..d77f329 100644
  /// A view-projection's jitter taken off (row major): a jitter moves clip x and y by jitter * w, so jitter times the w row
  /// comes off the first two rows
  inline void unjitter(float m[16], const float jitter[2]) {
+diff --git a/gpu/vk/gpu_profile.h b/gpu/vk/gpu_profile.h
+new file mode 100644
+index 0000000..60c699d
+--- /dev/null
++++ b/gpu/vk/gpu_profile.h
+@@ -0,0 +1,18 @@
++#pragma once
++#include <cstdint>
++
++namespace mkwvk {
++
++// Discrete capacity comes from device-local heaps. UMA capacity is shared RAM.
++constexpr int recommended_preset(bool discrete, uint64_t capacity, uint64_t budget) {
++    constexpr uint64_t MiB = 1024 * 1024;
++    if (!discrete || !capacity) return 1;
++    const uint64_t usable = budget && budget < capacity ? budget : capacity;
++    if (usable < 5 * 1024 * MiB) return 1;
++    if (usable < 7 * 1024 * MiB) return 2;
++    if (usable < 10 * 1024 * MiB) return 3;
++    if (usable < 14 * 1024 * MiB) return 4;
++    return 5;
++}
++
++}
 diff --git a/gpu/vk/vk_fsr3.cpp b/gpu/vk/vk_fsr3.cpp
 index 77e5a80..47d3f88 100644
 --- a/gpu/vk/vk_fsr3.cpp
@@ -468,11 +492,44 @@ index 6e10a95..26420fb 100644
  /// (linux) a Vulkan FSR 4 library is there and records with descriptor buffers: the device has to enable them
  bool fsr4_wants_descriptor_buffer();
  /// FSR 4 as the temporal upscaler's engine (FSR 4 and its native AA on the Upscaler row); nullptr in a build without it
+diff --git a/gpu/vk/vk_main.cpp b/gpu/vk/vk_main.cpp
+index 1c5afd4..ccf7e76 100644
+--- a/gpu/vk/vk_main.cpp
++++ b/gpu/vk/vk_main.cpp
+@@ -510,8 +510,18 @@ bool create_device() {
+     ci.pQueueCreateInfos = qs;
+     ci.enabledExtensionCount = (uint32_t)want.size();
+     ci.ppEnabledExtensionNames = want.data();
+-    if (vkCreateDevice(dev.physical, &ci, nullptr, &dev.device) != VK_SUCCESS) {
+-        logf("vk: vkCreateDevice failed");
++    logf("vk: capability device=%s vendor=%#06x deviceID=%#06x API=%u.%u.%u driver=%#x "
++         "dynamicRendering=%u synchronization2=%u timeline=%u BDA=%u storageExtended=%u storageWriteWithoutFormat=%u "
++         "shaderInt8=%u integerDot=%u memoryBudget=%u mesh=%u meshCompute=%u taskMeshCompute=%u",
++         dev.props.deviceName, dev.props.vendorID, dev.props.deviceID, VK_API_VERSION_MAJOR(dev.props.apiVersion),
++         VK_API_VERSION_MINOR(dev.props.apiVersion), VK_API_VERSION_PATCH(dev.props.apiVersion), dev.props.driverVersion,
++         f13.dynamicRendering, f13.synchronization2, f12.timelineSemaphore, f12.bufferDeviceAddress,
++         f.features.shaderStorageImageExtendedFormats, f.features.shaderStorageImageWriteWithoutFormat,
++         f12.shaderInt8, f13.shaderIntegerDotProduct, (unsigned)dev.memory_budget, (unsigned)dev.mesh_shader,
++         (unsigned)dev.mesh_fallback, (unsigned)dev.task_mesh_fallback);
++    const VkResult create_result = vkCreateDevice(dev.physical, &ci, nullptr, &dev.device);
++    if (create_result != VK_SUCCESS) {
++        logf("vk: vkCreateDevice failed (VkResult %d)", (int)create_result);
+         return false;
+     }
+ 
 diff --git a/gpu/vk/vk_menu.cpp b/gpu/vk/vk_menu.cpp
-index 3985f3e..ee9b2d4 100644
+index 3985f3e..15ac8aa 100644
 --- a/gpu/vk/vk_menu.cpp
 +++ b/gpu/vk/vk_menu.cpp
-@@ -229,7 +229,8 @@ const char* hn_upscaler(int v, int variant) {
+@@ -29,6 +29,7 @@
+ 
+ #include "vk_paths.h"
+ #include "vk_menu.h"
++#include "gpu_profile.h"
+ #include "perf_monitor.h"
+ #include "vk_menu_hit.h"
+ #include "vk_fps.h"    // (the FPS counter's levels and numbers)
+@@ -229,7 +230,8 @@ const char* hn_upscaler(int v, int variant) {
      v = std::clamp(v, 0, ur::kUpscalers - 1);
      // (the reasons are said only where the engine is in the build: one without FSR does not tell an NVIDIA user why)
      const char* dn = dlss_built() || variant >= 0 ? dlss_no[d] : nullptr;
@@ -482,6 +539,32 @@ index 3985f3e..ee9b2d4 100644
      if (v != ur::GAME || (!dn && !fn)) return t[v];
      static char b[DLSS_WHY_COUNT][FSR_WHY_COUNT][320];
      snprintf(b[d][f], sizeof b[d][f], "%s%s%s%s%s", t[0], dn ? " " : "", dn ? dn : "", fn ? " " : "", fn ? fn : "");
+@@ -611,12 +613,19 @@ void apply_preset(int p) {
+     sync_preset_budgets(p);
+ }
+ 
+-MENU_HINTS(hn_preset, 0, "Each row as you set it. Changing most rows yourself comes back to Custom, with the preset's memory caps kept.",
+-           "Resolution 50% (with DLSS its nearest mode), Lanczos, Sharpness 30%, the Handheld Profile.",
+-           "Resolution 75% (with DLSS its nearest mode), Lanczos, Sharpness 30%, the Handheld Profile.",
+-           "Resolution 100% (with DLSS its nearest mode), Catmull-Rom, Sharpness 30%.",
+-           "Resolution 100% (with DLSS its nearest mode), Lanczos, Sharpness 40%.",
+-           "Resolution 100% (with DLSS its nearest mode), Lanczos, Sharpness 50%.")
++const char* hn_preset(int value, int) {
++    if (value != 0) return "Applies this preset's scaling and resource limits. Upscaler and Frame generation stay as selected.";
++    static char hint[160];
++    if (!dev.device) return "Choose a preset to apply its settings.";
++    uint64_t local = 0, used = 0, budget = 0;
++    for (uint32_t h = 0; h < dev.memory.memoryHeapCount; ++h)
++        if (dev.memory.memoryHeaps[h].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) local += dev.memory.memoryHeaps[h].size;
++    if (!dev.memory_budget || !vram_usage(&used, &budget)) budget = 0;
++    const int suggested = recommended_preset(dev.props.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU, local, budget);
++    snprintf(hint, sizeof hint, "Suggested starting preset: %s. Select it to apply. For 60 FPS testing, turn Frame generation Off.",
++             tx_preset(suggested));
++    return hint;
++}
+ MENU_HINTS(hn_gpu, 0, "The best dedicated GPU.")
+ /// Frame generation: how many frames are made for each of the game's
+ const char* hn_framegen(int v, int variant) {
 diff --git a/gpu/vk/vk_temporal.cpp b/gpu/vk/vk_temporal.cpp
 index fe8fa60..f08ce28 100644
 --- a/gpu/vk/vk_temporal.cpp
