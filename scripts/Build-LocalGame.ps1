@@ -8,13 +8,16 @@ param(
     [Parameter(Mandatory)][string]$LlvmMingw,
     [Parameter(Mandatory)][string]$Cpm,
     [switch]$EnableFsr412,
+    [switch]$EnableMemoryOptimization,
     [ValidateRange(1,32)][int]$Jobs = 8
 )
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path $PSScriptRoot
 $source = Join-Path $repo 'upstream/mako'
 $expected = 'bef2014454a9a3e669c77cb4e6cfb4b04f362f3a'
-$patch = Join-Path $repo 'patches/fsr-4.1.2.patch'
+$patches = @()
+if ($EnableFsr412) { $patches += Join-Path $repo 'patches/fsr-4.1.2.patch' }
+if ($EnableMemoryOptimization) { $patches += Join-Path $repo 'patches/rx6700m-memory.patch' }
 $builder = Join-Path $source 'nx2/make_game.py'
 if (-not (Test-Path -LiteralPath $builder -PathType Leaf)) {
     throw 'Initialize upstream with git submodule update --init.'
@@ -47,16 +50,16 @@ try {
     $env:RX_CPM = $cpmPath
     $env:HOOKSHOT_NO_UPDATE_CHECK = '1'
     $fsrArgs = @()
-    if ($EnableFsr412) {
+    foreach ($patch in $patches) {
         git -C $source apply --ignore-whitespace --reverse --check $patch 2>$null
         if ($LASTEXITCODE -ne 0) {
             git -C $source apply --ignore-whitespace --check $patch
             if ($LASTEXITCODE -ne 0) { throw 'Cannot apply --ignore-whitespace the FSR patch to this checkout.' }
             git -C $source apply --ignore-whitespace $patch
-            if ($LASTEXITCODE -ne 0) { throw 'FSR patch failed.' }
+            if ($LASTEXITCODE -ne 0) { throw 'Patch failed: $patch' }
         }
-        $fsrArgs = @('--fsr')
     }
+    if ($EnableFsr412) { $fsrArgs = @('--fsr') }
     & $pythonExe -I $builder @fsrArgs --exefs $exefs --romfs $romfs `
         --out (Join-Path $root game) --work (Join-Path $root build) --jobs $Jobs `
         --no-prepare-shaders --log (Join-Path $root build.log)

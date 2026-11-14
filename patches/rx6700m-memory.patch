@@ -1,0 +1,138 @@
+diff --git a/gpu/vk/vk_vma.cpp b/gpu/vk/vk_vma.cpp
+index 5f65114..eccf4d1 100644
+--- a/gpu/vk/vk_vma.cpp
++++ b/gpu/vk/vk_vma.cpp
+@@ -51,6 +51,21 @@ const uint64_t kImageBlock = (getenv("RX_VK_IMAGE_BLOCK_MB") ? (uint64_t)std::ma
+ // image made there then took 30-70 ms (RTX 5070). RX_VK_TARGET_BLOCKS=0: in the textures' blocks, as before
+ VmaPool target_image_pool = VK_NULL_HANDLE;
+ bool target_pool_tried = false;
++
++static uint64_t target_block_size(uint32_t memory_type) {
++    // Keep the explicit tuning override and all other adapters' defaults.
++    if (getenv("RX_VK_IMAGE_BLOCK_MB") || getenv("RX_VK_TARGET_BLOCK_MB"))
++        return getenv("RX_VK_TARGET_BLOCK_MB")
++            ? (uint64_t)std::clamp(atoi(getenv("RX_VK_TARGET_BLOCK_MB")), 16, 512) << 20
++            : kImageBlock;
++    if (dev.props.vendorID != 0x1002 || dev.props.deviceType != VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU ||
++        !dev.memory_budget) return kImageBlock;
++    const uint32_t heap = dev.memory.memoryTypes[memory_type].heapIndex;
++    VmaBudget budgets[VK_MAX_MEMORY_HEAPS]{};
++    vmaGetHeapBudgets(vma, budgets);
++    const auto cap = budgets[heap].budget;
++    return cap && cap <= (9ull << 30) ? 64ull << 20 : kImageBlock;
++}
+ VmaPool images_pool();
+ VmaPool target_images_pool() {
+     if (target_pool_tried) return target_image_pool;
+@@ -71,9 +86,9 @@ VmaPool target_images_pool() {
+     if (vmaFindMemoryTypeIndexForImageInfo(vma, &rep, &ai, &type) != VK_SUCCESS) return VK_NULL_HANDLE;
+     VmaPoolCreateInfo pi{};
+     pi.memoryTypeIndex = type;
+-    pi.blockSize = kImageBlock;
++    pi.blockSize = target_block_size(type);
+     if (vmaCreatePool(vma, &pi, &target_image_pool) != VK_SUCCESS) target_image_pool = VK_NULL_HANDLE;
+-    logf("vk: render targets' images from blocks of their own (%llu MB, memory type %u)%s", (unsigned long long)(kImageBlock >> 20),
++    logf("vk: render targets' images from blocks of their own (%llu MiB, memory type %u)%s", (unsigned long long)(pi.blockSize >> 20),
+          type, target_image_pool ? "" : ": not made");
+     return target_image_pool;
+ }
+@@ -227,6 +242,27 @@ bool image_compact_pass_end(uint64_t* freed_bytes, uint32_t* freed_blocks) {
+     return compact_over(freed_bytes, freed_blocks);
+ }
+ 
++static void allocation_failure(const char* kind, VkResult result, uint64_t bytes,
++                               uint32_t usage, const VkImageCreateInfo* image = nullptr) {
++    static std::atomic<unsigned> failures{0};
++    const unsigned count = ++failures;
++    if (count > 8 && count % 120 != 0) return;
++    VmaBudget budgets[VK_MAX_MEMORY_HEAPS]{};
++    vmaGetHeapBudgets(vma, budgets);
++    logf("vk: allocation failure #%u: %s VkResult=%d bytes=%llu usage=%#x %ux%ux%u format=%d",
++         count, kind, int(result), (unsigned long long)bytes, usage,
++         image ? image->extent.width : 0, image ? image->extent.height : 0,
++         image ? image->extent.depth : 0, image ? int(image->format) : 0);
++    for (uint32_t heap = 0; heap < dev.memory.memoryHeapCount; ++heap) {
++        const auto& b = budgets[heap];
++        logf("vk: heap %u %s: budget=%llu usage=%llu blocks=%llu live=%llu bytes (%s)",
++             heap, (dev.memory.memoryHeaps[heap].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) ? "device" : "system",
++             (unsigned long long)b.budget, (unsigned long long)b.usage,
++             (unsigned long long)b.statistics.blockBytes, (unsigned long long)b.statistics.allocationBytes,
++             dev.memory_budget ? "driver budget" : "VMA estimate");
++    }
++}
++
+ bool create_image(const VkImageCreateInfo& ci, VkImage& image, VmaAllocation& allocation, bool dedicated, bool target, bool textures) {
+     VmaAllocationCreateInfo ai{};
+     ai.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE;
+@@ -248,20 +284,30 @@ bool create_image(const VkImageCreateInfo& ci, VkImage& image, VmaAllocation& al
+         pai.usage = VMA_MEMORY_USAGE_UNKNOWN;
+         if (vmaCreateImage(vma, &ci, &pai, &image, &allocation, nullptr) == VK_SUCCESS) return true;
+     }
+-    if (vmaCreateImage(vma, &ci, &ai, &image, &allocation, nullptr) == VK_SUCCESS) return true;
++    VkResult result = vmaCreateImage(vma, &ci, &ai, &image, &allocation, nullptr);
++    if (result == VK_SUCCESS) return true;
+     if (ai.flags & VMA_ALLOCATION_CREATE_WITHIN_BUDGET_BIT) {
+         static std::atomic<int> told_budget{0};
+         if (told_budget++ < 10) logf("vk: image over budget, retrying without WITHIN_BUDGET");
+         VmaAllocationCreateInfo vai = ai;
+         vai.flags &= ~VMA_ALLOCATION_CREATE_WITHIN_BUDGET_BIT;
+-        if (vmaCreateImage(vma, &ci, &vai, &image, &allocation, nullptr) == VK_SUCCESS) return true;
++        result = vmaCreateImage(vma, &ci, &vai, &image, &allocation, nullptr);
++        if (result == VK_SUCCESS) return true;
+     }
+     // (hookshot) VRAM is full (a 4 GB card at a high resolution, #96): an image left unmade is a black screen, so it goes
+     // to system memory instead, slow but drawn
+-    if (getenv("RX_VK_IMAGES_VRAM_ONLY")) return false;
++    const char* kind = target ? "render target" : textures ? "texture" : "image";
++    if (getenv("RX_VK_IMAGES_VRAM_ONLY")) {
++        allocation_failure(kind, result, 0, ci.usage, &ci);
++        return false;
++    }
+     VmaAllocationCreateInfo sai{};
+     sai.usage = VMA_MEMORY_USAGE_AUTO;
+-    if (vmaCreateImage(vma, &ci, &sai, &image, &allocation, nullptr) != VK_SUCCESS) return false;
++    result = vmaCreateImage(vma, &ci, &sai, &image, &allocation, nullptr);
++    if (result != VK_SUCCESS) {
++        allocation_failure(kind, result, 0, ci.usage, &ci);
++        return false;
++    }
+     static std::atomic<int> told{0};
+     if (told++ < 4) logf("vk: VRAM full: a %ux%u image (format %d) in system memory", ci.extent.width, ci.extent.height, (int)ci.format);
+     return true;
+@@ -287,7 +333,11 @@ bool create_buffer(uint64_t size, VkBufferUsageFlags usage, bool host_visible, V
+     static const bool blocks = getenv("RX_VK_BLOCK_BUFFERS") != nullptr;
+     if (dedicated && !blocks) ai.flags |= VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT;
+     VmaAllocationInfo info{};
+-    if (vmaCreateBuffer(vma, &bi, &ai, &buffer, &allocation, &info) != VK_SUCCESS) return false;
++    const VkResult result = vmaCreateBuffer(vma, &bi, &ai, &buffer, &allocation, &info);
++    if (result != VK_SUCCESS) {
++        allocation_failure("buffer", result, size, usage);
++        return false;
++    }
+     if (mapped) *mapped = info.pMappedData;
+     return true;
+ }
+@@ -303,7 +353,11 @@ bool create_buffer_cached(uint64_t size, VkBufferUsageFlags usage, VkBuffer& buf
+     ai.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT;
+     if (dedicated) ai.flags |= VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT;   // (its own memory object: no part of a 64 MB block left unused)
+     VmaAllocationInfo info{};
+-    if (vmaCreateBuffer(vma, &bi, &ai, &buffer, &allocation, &info) != VK_SUCCESS) return false;
++    const VkResult result = vmaCreateBuffer(vma, &bi, &ai, &buffer, &allocation, &info);
++    if (result != VK_SUCCESS) {
++        allocation_failure("cached host buffer", result, size, usage);
++        return false;
++    }
+     if (mapped) *mapped = info.pMappedData;
+     return true;
+ }
+@@ -328,7 +382,9 @@ bool create_device_buffer(uint64_t size, VkBufferUsageFlags usage, VkBuffer& buf
+     ai.requiredFlags = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
+     if (dev.memory_budget) ai.flags = VMA_ALLOCATION_CREATE_WITHIN_BUDGET_BIT;
+     if (dedicated) ai.flags |= VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT;
+-    return vmaCreateBuffer(vma, &bi, &ai, &buffer, &allocation, nullptr) == VK_SUCCESS;
++    const VkResult result = vmaCreateBuffer(vma, &bi, &ai, &buffer, &allocation, nullptr);
++    if (result != VK_SUCCESS) allocation_failure("device buffer", result, size, usage);
++    return result == VK_SUCCESS;
+ }
+ /// (every heap: what VMA has in blocks and allocations there, what the process uses of it, its budget; one line)
+ /// The image pools: their blocks, the images in them, and the free ranges between them (every 600 presents, with the heaps)
