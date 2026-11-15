@@ -4,6 +4,8 @@ param(
     [Parameter(Mandatory)][string]$GameDirectory,
     [Parameter(Mandatory)][string]$OutputDirectory,
     [switch]$PassTiming,
+    [string]$Scene,
+    [switch]$PerformanceAudit,
     [ValidateRange(0,86400)][double]$SkipSeconds = 0,
     [ValidateRange(0,86400)][double]$DurationSeconds = 0
 )
@@ -24,6 +26,10 @@ $start.UseShellExecute = $false
 $start.RedirectStandardError = $true
 $start.EnvironmentVariables['RX_VK_FRAME_LOG'] = $frameLog
 if ($PassTiming) { $start.EnvironmentVariables['RX_VK_PASS_TIMING'] = '1' }
+if ($PerformanceAudit) {
+    $start.EnvironmentVariables['RX_VK_PERF_AUDIT'] = '1'
+    $start.EnvironmentVariables['HOS_PROFILE'] = '5'
+}
 $process = $null
 $started = [DateTimeOffset]::UtcNow
 $clock = [Diagnostics.Stopwatch]::StartNew()
@@ -100,9 +106,11 @@ try {
         LastRendererMessage = $lastLine
         SkipSeconds = $SkipSeconds
         DurationSeconds = $DurationSeconds
+        Scene = $Scene
+        PerformanceAudit = $PerformanceAudit.IsPresent
         PassTiming = $PassTiming.IsPresent
         Failure = $failure
     } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $out 'session.json') -Encoding UTF8
-    Select-String -LiteralPath $stderr -Pattern 'provider dispatched|fsr3.*frames drawn|FSR 3.1 fallback|first negative VkResult|destroyed frame|GPU pass timing|GPU span|FSR 4 SDK dispatch|memory heaps|compaction.*over|pipeline.cache|shader.cache|camera.cut|history.reset|validation' |
+    Select-String -LiteralPath $stderr -Pattern 'provider dispatched|fsr3.*frames drawn|FSR 3.1 fallback|first negative VkResult|destroyed frame|GPU pass timing|GPU span|FSR 4 SDK dispatch|memory heaps|compaction.*over|pipeline.cache|shader.cache|camera.cut|history.reset|validation|perf_audit|vcores:|busiest threads|host time in GPU resource waits' |
         ForEach-Object Line | Set-Content -LiteralPath (Join-Path $out 'diagnostics.txt') -Encoding UTF8
 }

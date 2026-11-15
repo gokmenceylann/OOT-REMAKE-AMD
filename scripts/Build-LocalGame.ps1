@@ -9,6 +9,7 @@ param(
     [Parameter(Mandatory)][string]$Cpm,
     [switch]$EnableFsr412,
     [switch]$EnableMemoryOptimization,
+    [switch]$EnablePerformanceAudit,
     [ValidateRange(1,32)][int]$Jobs = 8
 )
 $ErrorActionPreference = 'Stop'
@@ -18,6 +19,7 @@ $expected = 'b77ac86187330eb7447ac65ab23187baac4600ca'
 $patches = @()
 if ($EnableFsr412) { $patches += Join-Path $repo 'patches/fsr-4.1.2.patch' }
 if ($EnableMemoryOptimization) { $patches += Join-Path $repo 'patches/rx6700m-memory.patch' }
+if ($EnablePerformanceAudit) { $patches += Join-Path $repo 'patches/performance-audit.patch' }
 $builder = Join-Path $source 'nx2/make_game.py'
 if (-not (Test-Path -LiteralPath $builder -PathType Leaf)) {
     throw 'Initialize upstream with git submodule update --init.'
@@ -54,7 +56,7 @@ try {
         git -C $source apply --ignore-whitespace --reverse --check $patch 2>$null
         if ($LASTEXITCODE -ne 0) {
             git -C $source apply --ignore-whitespace --check $patch
-            if ($LASTEXITCODE -ne 0) { throw 'Cannot apply --ignore-whitespace the FSR patch to this checkout.' }
+            if ($LASTEXITCODE -ne 0) { throw "Cannot apply patch to this checkout: $patch" }
             git -C $source apply --ignore-whitespace $patch
             if ($LASTEXITCODE -ne 0) { throw 'Patch failed: $patch' }
         }

@@ -1,0 +1,54 @@
+diff --git a/gpu/vk/vk_replay.cpp b/gpu/vk/vk_replay.cpp
+index 7c245cd3..b86863b2 100644
+--- a/gpu/vk/vk_replay.cpp
++++ b/gpu/vk/vk_replay.cpp
+@@ -352,6 +352,7 @@ int64_t st_wait_ns;   // (time the replay waited for a recording slot: the GPU b
+ VkQueryPool ts_pool = VK_NULL_HANDLE;
+ bool ts_pending[kRecordings];
+ int64_t st_gpu_ns, st_gpu_max_ns;
++uint64_t gpu_timed_recordings;
+ void gpu_time_collect(Recording& r) {
+     if (!ts_pool || !ts_pending[r.slot]) return;
+     ts_pending[r.slot] = false;
+@@ -360,6 +361,7 @@ void gpu_time_collect(Recording& r) {
+         return;
+     if (t[1] <= t[0]) return;
+     const int64_t ns = (int64_t)((t[1] - t[0]) * (double)dev.props.limits.timestampPeriod);
++    ++gpu_timed_recordings;
+     st_gpu_ns += ns;
+     st_gpu_max_ns = std::max(st_gpu_max_ns, ns);
+     perf_monitor_note_gpu_time((uint64_t)ns);
+@@ -3625,11 +3627,15 @@ void log_frame_stats() {
+              (pskip - l_pskip) / 120.0, (pwaits - l_pwaits) / 120.0, (pwait_ms - l_pwait_ms) / 120.0,
+              shader_translate_ms(), jobs_pending(), libs);
+         l_pskip = pskip, l_pwaits = pwaits, l_pwait_ms = pwait_ms, l_links = links, l_link_ms = link_ms;
++        double audit_submit_ms = 0, audit_present_ms = 0, audit_sync_ms = 0;
+         {
+             static const char* names[PROF_COUNT] = {"submit", "present", "draw", "descriptors", "texture lookups",
+                                                     "uploads", "pipelines", "programs", "commands", "dispatch",
+                                                     "memory sync", "queue submit", "slot wait"};
+             static int64_t last[PROF_COUNT];
++            audit_submit_ms = (prof_ns[PROF_SUBMIT] - last[PROF_SUBMIT]) / 120.0 / 1e6;
++            audit_present_ms = (prof_ns[PROF_PRESENT] - last[PROF_PRESENT]) / 120.0 / 1e6;
++            audit_sync_ms = (prof_ns[PROF_MEMSYNC] - last[PROF_MEMSYNC]) / 120.0 / 1e6;
+             char line[600];
+             int n = snprintf(line, sizeof line, "vk: a frame's replay time (ms):");
+             for (int i = 0; i < PROF_COUNT; i++) {
+@@ -3688,7 +3694,16 @@ void log_frame_stats() {
+             st_barrier_flags.clear();
+         }
+         static int64_t l_gpu;
+-        static uint64_t l_made;
++        static uint64_t l_made, last_audit_gpu_samples;
++        static const bool audit = env_on("RX_VK_PERF_AUDIT");
++        if (audit) {
++            logf("vk: perf_audit present_end=%lld presents=120 replay_ms=%.3f present_ms=%.3f memory_sync_ms=%.3f "
++                 "gpu_recording_ms=%.3f gpu_recordings=%llu draws=%.1f passes=%.1f pipeline_jobs=%d texture_bytes=%llu",
++                 (long long)presents, audit_submit_ms, audit_present_ms, audit_sync_ms,
++                 (st_gpu_ns - l_gpu) / 120.0 / 1e6, (unsigned long long)(gpu_timed_recordings - last_audit_gpu_samples),
++                 (d - l_d) / 120.0, (passes - l_pass) / 120.0, jobs_pending(), (unsigned long long)texture_bytes());
++            last_audit_gpu_samples = gpu_timed_recordings;
++        }
+         logf("vk: GPU time %.1f ms a frame (the longest submission %.1f ms); %.1f textures made a frame",
+              (st_gpu_ns - l_gpu) / 120.0 / 1e6, st_gpu_max_ns / 1e6, (texture_made() - l_made) / 120.0);
+         {   // (issue 109: the movie networks too slow on this card: left out from now on, vk_draw.cpp movie_networks_slow)
