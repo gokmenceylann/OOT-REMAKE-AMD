@@ -16,7 +16,10 @@ $ErrorActionPreference = 'Stop'
 $repo = Split-Path $PSScriptRoot
 $source = Join-Path $repo 'upstream/mako'
 $expected = 'b77ac86187330eb7447ac65ab23187baac4600ca'
-$patches = @(Join-Path $repo 'patches/fg-present-recovery.patch')
+$patches = @(
+    (Join-Path $repo 'patches/fg-present-recovery.patch'),
+    (Join-Path $repo 'patches/pipeline-performance.patch')
+)
 if ($EnableFsr412) { $patches += Join-Path $repo 'patches/fsr-4.1.2.patch' }
 if ($EnableMemoryOptimization) { $patches += Join-Path $repo 'patches/rx6700m-memory.patch' }
 if ($EnablePerformanceAudit) { $patches += Join-Path $repo 'patches/performance-audit.patch' }

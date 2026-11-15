@@ -6,6 +6,7 @@ param(
     [switch]$PassTiming,
     [string]$Scene,
     [switch]$PerformanceAudit,
+    [string]$SampleGuestThread,
     [ValidateRange(0,86400)][double]$SkipSeconds = 0,
     [ValidateRange(0,86400)][double]$DurationSeconds = 0
 )
@@ -29,6 +30,11 @@ if ($PassTiming) { $start.EnvironmentVariables['RX_VK_PASS_TIMING'] = '1' }
 if ($PerformanceAudit) {
     $start.EnvironmentVariables['RX_VK_PERF_AUDIT'] = '1'
     $start.EnvironmentVariables['HOS_PROFILE'] = '5'
+}
+if ($SampleGuestThread) {
+    $start.EnvironmentVariables['HOS_PROFILE'] = '5'
+    $start.EnvironmentVariables['HOS_SAMPLE'] = $SampleGuestThread
+    $start.EnvironmentVariables['HOS_SAMPLE_FILE'] = Join-Path $out 'guest-stacks.txt'
 }
 $process = $null
 $started = [DateTimeOffset]::UtcNow
@@ -108,9 +114,10 @@ try {
         DurationSeconds = $DurationSeconds
         Scene = $Scene
         PerformanceAudit = $PerformanceAudit.IsPresent
+        SampleGuestThread = $SampleGuestThread
         PassTiming = $PassTiming.IsPresent
         Failure = $failure
     } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $out 'session.json') -Encoding UTF8
-    Select-String -LiteralPath $stderr -Pattern 'provider dispatched|fsr3.*frames drawn|FSR 3.1 fallback|first negative VkResult|destroyed frame|GPU pass timing|GPU span|FSR 4 SDK dispatch|memory heaps|compaction.*over|pipeline.cache|shader.cache|camera.cut|history.reset|validation|perf_audit|vcores:|busiest threads|host time in GPU resource waits' |
+    Select-String -LiteralPath $stderr -Pattern 'provider dispatched|fsr3.*frames drawn|FSR 3.1 fallback|first negative VkResult|destroyed frame|GPU pass timing|GPU span|FSR 4 SDK dispatch|memory heaps|compaction.*over|pipeline.cache|shader.cache|camera.cut|history.reset|validation|strict graphics pipeline cache hits|pipeline cache save|perf_audit|prof-sample|vcores:|busiest threads|host time in GPU resource waits' |
         ForEach-Object Line | Set-Content -LiteralPath (Join-Path $out 'diagnostics.txt') -Encoding UTF8
 }

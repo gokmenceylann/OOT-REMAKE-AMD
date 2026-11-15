@@ -1,0 +1,88 @@
+diff --git a/gpu/vk/pipeline_cache_file.h b/gpu/vk/pipeline_cache_file.h
+index 5e61f404..cd65de36 100644
+--- a/gpu/vk/pipeline_cache_file.h
++++ b/gpu/vk/pipeline_cache_file.h
+@@ -264,7 +264,17 @@ public:
+     }
+     static PipelineCacheFile writable(const std::string& path, size_t capacity) {
+         PipelineCacheFile result;
+-        if (!capacity || capacity > (uint64_t)INT64_MAX || !result.create_temporary(path)) return {};
++        if (!capacity || capacity > (uint64_t)INT64_MAX) return {};
++#if defined(_WIN32)
++        // The destination stays in place until publication, so the temporary needs its full size in free space.
++        const auto filename = wide(path);
++        if (filename.empty()) return {};
++        const auto parent = std::filesystem::path(filename).parent_path();
++        ULARGE_INTEGER available{};
++        if (GetDiskFreeSpaceExW(parent.empty() ? L"." : parent.c_str(), &available, nullptr, nullptr) &&
++            capacity > available.QuadPart) return {};
++#endif
++        if (!result.create_temporary(path)) return {};
+         result.size_ = capacity;
+         if (!result.resize(capacity)) return {};
+ #if !defined(_WIN32)
+diff --git a/gpu/vk/vk_draw.cpp b/gpu/vk/vk_draw.cpp
+index 596b80e8..441b24fa 100644
+--- a/gpu/vk/vk_draw.cpp
++++ b/gpu/vk/vk_draw.cpp
+@@ -2458,6 +2458,34 @@ PipeEntry* graphics_pipeline(const Program& p, const NvnState& s, const Targets&
+         e->ready = true;
+         return remember(e);
+     }
++#ifdef _WIN32
++    // Strict draws wait for the full pipeline. Take a conforming cached pipeline before a worker
++    // can be queued for it. A cache miss does not compile on this thread.
++    static const bool probe_strict_amd = [] {
++        const char* strict = getenv("RX_VK_PIPE_SKIP");
++        const char* probe = getenv("RX_VK_PIPE_PROBE");
++        return strict && atoi(strict) == 0 && (!probe || !env_value_off(probe)) &&
++               dev.props.vendorID == 0x1002 && dev.vk13.pipelineCreationCacheControl;
++    }();
++    if (probe_strict_amd && pcache && !p.fallback) {
++        bool cold = false;
++        use_counters.made_how = 0;
++        const quick_pipe::Raise asking(ask_start_first);
++        if (const VkPipeline cached = build_graphics(p, s, at, topo, -1, &cold)) {
++            e->pipeline = cached;
++            const int how = use_counters.made_how ? use_counters.made_how : 2;
++            e->how.store(how, std::memory_order_relaxed);
++            if (predicted) predicted_use(how);
++            e->ready.store(true, std::memory_order_release);
++            census.pipes_taken++;
++            static std::atomic<uint64_t> hits{0};
++            const uint64_t n = ++hits;
++            if (n == 1 || n % 200 == 0)
++                logf("vk: strict graphics pipeline cache hits before enqueue: %llu", (unsigned long long)n);
++            return remember(e);
++        }
++    }
++#endif
+     // (linked here, from the libraries: the draw goes ahead, and the worker's full build replaces it when it is done. Not linked
+     // when a library is cold: the entry stays not ready, and the draw is left out or waits for the full build)
+     uint64_t cold[2]{};
+@@ -7395,7 +7423,7 @@ void draw(VkCommandBuffer cmd, NvnState& s, const DrawArgs& d) {
+     // frame is held about that long at most (one build started may finish past it), not the 0.2-3 s an area's first programs
+     // froze it when every draw waited. Clean first, then fast: the user's call. 0: left out at once, as before
+     const auto brief_wait = [&](const std::atomic<bool>& ready, const std::shared_ptr<JobClaim>* claim) {
+-        static const double budget_ms = getenv("RX_VK_PIPE_WAIT_MS") ? atof(getenv("RX_VK_PIPE_WAIT_MS")) : 0.0;   // (off by default since 3.6.1, §81)
++        const double budget_ms = pipe_wait_budget_ms();
+         static thread_local uint64_t frame = ~0ull;
+         static thread_local double used_ms = 0;
+         if (budget_ms <= 0) return false;
+diff --git a/tests/pipeline_cache_file_test.cpp b/tests/pipeline_cache_file_test.cpp
+index eee221fb..0fd61673 100644
+--- a/tests/pipeline_cache_file_test.cpp
++++ b/tests/pipeline_cache_file_test.cpp
+@@ -34,6 +34,12 @@ static void cleanup_cases(const std::filesystem::path& parent, int& checks) {
+ #endif
+     std::set<fs::path> before;for(const auto& entry:fs::directory_iterator(root))before.insert(entry.path());
+     const auto bytes=published.u8string();const std::string destination(reinterpret_cast<const char*>(bytes.data()),bytes.size());
++#ifdef _WIN32
++    const auto available = fs::space(root).available;
++    CHECK(available < static_cast<uint64_t>(INT64_MAX));
++    CHECK(mkwvk::PipelineCacheFile::writable(destination, static_cast<size_t>(available + 1)).empty());
++    for (const auto& entry : fs::directory_iterator(root)) CHECK(before.count(entry.path()) != 0);
++#endif
+     auto writer=mkwvk::PipelineCacheFile::writable(destination,128);CHECK(!writer.empty());
+     fs::path live;for(const auto& entry:fs::directory_iterator(root))if(!before.count(entry.path()))live=entry.path();
+     CHECK(!live.empty());fs::last_write_time(live,old);
