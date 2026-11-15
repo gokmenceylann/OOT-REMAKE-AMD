@@ -1,0 +1,101 @@
+--- a/gpu/vk/vk_framegen.h
++++ b/gpu/vk/vk_framegen.h
+@@ -7,8 +7,8 @@
+ 
+ bool framegen_on();
+ /// Records the frame's processing into the present's recording (src: the window texture's view, sw x sh, the crop
+-/// x, y, w, h); false when interpolation cannot run (the present goes to the window as without it)
+-bool framegen_record(VkCommandBuffer cmd, VkImageView src, uint32_t sw, uint32_t sh, const int crop[4]);
++/// x, y, w, h); complete is false when pipeline work was skipped. False when interpolation cannot run (the present goes to the window as without it)
++bool framegen_record(VkCommandBuffer cmd, VkImageView src, uint32_t sw, uint32_t sh, const int crop[4], bool complete);
+ /// (hookshot) Who made the made frames of the sets shown lately (the last 64, about a second at 60): what the Insert menu's
+ /// Frame generation by row and the FPS counter name. None: none made (Off, nothing to blend from, none for half a second)
+ enum class FgMaker { None, BuiltIn, Dlss, Fsr3 };
+--- a/gpu/vk/vk_framegen.cpp
++++ b/gpu/vk/vk_framegen.cpp
+@@ -813,7 +813,7 @@
+     return 1;
+ }
+ 
+-bool framegen_record(VkCommandBuffer cmd, VkImageView src, uint32_t sw, uint32_t sh, const int crop[4]) {
++bool framegen_record(VkCommandBuffer cmd, VkImageView src, uint32_t sw, uint32_t sh, const int crop[4], bool complete) {
+     const PresentSourceRect source = present_source_rect(sw, sh, crop);
+     const int x0 = (int)source.x, y0 = (int)source.y, w = (int)source.w, h = (int)source.h;
+     if (!src || w <= 0 || h <= 0 || !init() || !ensure_size(cmd, (uint32_t)w, (uint32_t)h)) return false;
+@@ -838,7 +838,8 @@
+     // menu runs on the display thread, and the set's last image would be one that was never made)
+     const int cur = fg.cur, prev = cur ^ 1, m = fg.mult;
+     const bool auto_rate = opts.framegen == 1;   // (read once, for the same reason)
+-    const bool blend = fg.have_prev && !gap;
++    // A partial draw/dispatch result must neither drive interpolation nor seed the next blend.
++    const bool blend = complete && fg.have_prev && !gap;
+     set->reflex_id = reflex_frame();   // (NVIDIA Reflex: the game frame this set shows, vk_reflex.cpp)
+     set->antilag_id = antilag_frame();   // (AMD Anti-Lag 2: the same, vk_antilag.cpp)
+     static uint64_t sequence = 0;
+@@ -887,7 +888,7 @@
+         set->made = n > 0 && !set->game[n - 1] ? n : std::max(0, n - 1);   // (for framegen_made_image: any made)
+         note_maker(flow ? FgMaker::BuiltIn : FgMaker::None);   // (Auto: the renderer's own, DLSS-G is not asked)
+         full_barrier(cmd);
+-        fg.have_prev = true;
++        fg.have_prev = complete;
+         fg.cur = prev;
+         fg.recorded = set;
+         fg.recorded_at = now;
+@@ -929,7 +930,7 @@
+     vkCmdCopyImage(cmd, fg.frames[cur].image, VK_IMAGE_LAYOUT_GENERAL, set->frame[set->made].image,
+                    VK_IMAGE_LAYOUT_GENERAL, 1, &c);
+     full_barrier(cmd);
+-    fg.have_prev = true;
++    fg.have_prev = complete;
+     fg.cur = prev;
+     fg.recorded = set;
+     fg.recorded_at = now;
+--- a/gpu/vk/vk_replay.cpp
++++ b/gpu/vk/vk_replay.cpp
+@@ -4012,10 +4012,17 @@
+         // before it submits its next frame, and the interpolation's GPU work (~1 ms) held it back. The display
+         // thread's present follows it on the one queue. RX_VK_SHOT_MADE shots need it in this recording.)
+         static const bool fg_inline = env_on("RX_VK_SHOT_MADE");
+-        const bool fg_after = framegen_on() && tex && !fg_inline;
+-        interpolated = framegen_on() && tex && fg_inline &&
++        const bool fg_enabled = framegen_on() && tex;
++        int64_t skipped, waits;
++        double wait_ms;
++        draw_stats3(&skipped, &waits, &wait_ms);
++        static int64_t previous_skipped = 0;
++        const bool fg_complete = skipped == previous_skipped;
++        previous_skipped = skipped;
++        const bool fg_after = fg_enabled && !fg_inline;
++        interpolated = fg_enabled && fg_inline &&
+                        framegen_record(r.cmd, texture_view(tex, t, nullptr, VK_IMAGE_VIEW_TYPE_2D, ViewUse::Sample), sw,
+-                                       sh, crop);
++                                       sh, crop, fg_complete);
+         texture_frame(completed());
+         full_barrier(r.cmd);
+         presents++;
+@@ -4106,7 +4113,7 @@
+             // (its slot is free again once the next submit's value is reached: that one comes after it)
+             Recording& g = begin_recording(value + 1);
+             interpolated = framegen_record(g.cmd, texture_view(tex, t, nullptr, VK_IMAGE_VIEW_TYPE_2D, ViewUse::Sample),
+-                                           sw, sh, crop);
++                                           sw, sh, crop, fg_complete);
+             submit_recording(g, false);
+         }
+         // (frame generation at Off or Auto, where DLSS-G is not asked: its feature, if made, let go, vk_dlss.cpp)
+--- a/tests/test_framegen_gate.py
++++ b/tests/test_framegen_gate.py
+@@ -31,6 +31,14 @@
+     gate = source[source.index("bool framegen_on("):source.index("bool framegen_on(") + 400]
+     if "framegen_wanted(opts.framegen" not in gate:
+         raise SystemExit("presents still run the interpolation while the menu has it off")
++    record = block(source, "bool framegen_record(")
++    if "const bool blend = complete && fg.have_prev && !gap;" not in record:
++        raise SystemExit("partial frames can still drive interpolation")
++    if record.count("fg.have_prev = complete;") != 2 or "fg.have_prev = true;" in record:
++        raise SystemExit("Auto and fixed FG must both invalidate partial frame history")
++    replay = (ROOT / "gpu" / "vk" / "vk_replay.cpp").read_text(encoding="utf-8")
++    if replay.count("crop, fg_complete);") != 2 or "skipped == previous_skipped" not in replay:
++        raise SystemExit("both recording paths must use the per-frame skip delta")
+     fn = block(source, "bool framegen_wanted(")
+     fixture = r'''#include <cstdint>
+ #include <cstdio>
