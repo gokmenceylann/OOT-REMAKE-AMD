@@ -1,5 +1,9 @@
 [Setup]
+#ifdef StableRuntimeManifest
+AppId=OOT-REMAKE-AMD-Stable-GameImport
+#else
 AppId=OOT-REMAKE-AMD-GameImport
+#endif
 AppName=OOT-REMAKE-AMD Local Game Import
 AppVersion={#PackageVersion}
 DefaultDirName={localappdata}\Programs\OOT-REMAKE-AMD-Game
@@ -17,6 +21,9 @@ RestartApplications=no
 [Files]
 Source: "{#Payload}\*"; DestDir: "{app}"; Flags: recursesubdirs ignoreversion
 Source: "{#Payload}\scripts\Import-LocalGame.ps1"; Flags: dontcopy
+#ifdef StableRuntimeManifest
+Source: "{#Payload}\STABLE-RUNTIME-SHA256.txt"; Flags: dontcopy
+#endif
 Source: "{code:SourceGame}\hookshot.exe"; DestDir: "{app}"; Flags: external
 Source: "{code:SourceGame}\hookshot_vk.dll"; DestDir: "{app}"; Flags: external
 Source: "{code:SourceGame}\image.bin"; DestDir: "{app}"; Flags: external uninsneveruninstall
@@ -81,6 +88,10 @@ begin
   ErrorPath := ExpandConstant('{tmp}\game-check.txt');
   SetPreviousData(0, 'unused', '');
   Args := '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' + CheckScript + '" -CheckOnly -GameDirectory "' + SourceDir + '" -ErrorLog "' + ErrorPath + '"';
+#ifdef StableRuntimeManifest
+  ExtractTemporaryFile('STABLE-RUNTIME-SHA256.txt');
+  Args := Args + ' -RuntimeManifest "' + ExpandConstant('{tmp}\STABLE-RUNTIME-SHA256.txt') + '"';
+#endif
   if not Exec(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'), Args, '', SW_HIDE, ewWaitUntilTerminated, ErrorCode) or
       (ErrorCode <> 0) then begin
     if LoadStringFromFile(ErrorPath, Details) then begin

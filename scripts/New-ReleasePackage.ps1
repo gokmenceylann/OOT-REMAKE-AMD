@@ -4,9 +4,13 @@ param(
     [Parameter(Mandatory)][ValidatePattern('\Av\d+\.\d+\.\d+(?:-rc\.[1-9]\d*)?\z')][string]$Version,
     [Parameter(Mandatory)][string]$OutputDirectory,
     [string]$InnoCompiler,
-    [switch]$GameImport
+    [switch]$GameImport,
+    [switch]$StableImport
 )
 $ErrorActionPreference = 'Stop'
+if ($StableImport -and (!$GameImport -or $Version -ne 'v0.1.5')) {
+    throw 'The verified stable import package is available for v0.1.5.'
+}
 $repo = Split-Path $PSScriptRoot
 $out = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($OutputDirectory)
 [void][IO.Directory]::CreateDirectory($out)
@@ -40,6 +44,9 @@ try {
         [void][IO.Directory]::CreateDirectory((Split-Path $destination))
         Copy-Item -LiteralPath $source -Destination $destination
     }
+    if ($StableImport) {
+        Copy-Item -LiteralPath (Join-Path $repo 'installer/v0.1.5-runtime-sha256.txt') -Destination (Join-Path $payload 'STABLE-RUNTIME-SHA256.txt')
+    }
     Set-Content -LiteralPath (Join-Path $payload 'VERSION.txt') -Value $Version -Encoding ASCII
     $archive = Join-Path $stage "$base.zip"
     Compress-Archive -Path (Join-Path $payload '*') -DestinationPath $archive
@@ -47,7 +54,10 @@ try {
     if ($InnoCompiler) {
         $compiler = (Resolve-Path -LiteralPath $InnoCompiler).Path
         $definition = if ($GameImport) { 'installer/GameImport.iss' } else { 'installer/Tools.iss' }
-        & $compiler "/DPackageVersion=$($Version.Substring(1))" "/DPayload=$payload" "/O$stage" "/F$base-setup" (Join-Path $repo $definition)
+        $compilerArgs = @("/DPackageVersion=$($Version.Substring(1))", "/DPayload=$payload", "/O$stage", "/F$base-setup")
+        if ($StableImport) { $compilerArgs += '/DStableRuntimeManifest=1' }
+        $compilerArgs += Join-Path $repo $definition
+        & $compiler @compilerArgs
         if ($LASTEXITCODE -ne 0) { throw "ISCC failed with exit code $LASTEXITCODE." }
         $artifacts += Join-Path $stage "$base-setup.exe"
     }

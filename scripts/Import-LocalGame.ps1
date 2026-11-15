@@ -4,6 +4,7 @@ param(
     [Parameter(Mandatory)][string]$GameDirectory,
     [string]$Destination,
     [switch]$CheckOnly,
+    [string]$RuntimeManifest,
     [string]$ErrorLog
 )
 $ErrorActionPreference = 'Stop'
@@ -33,6 +34,32 @@ foreach ($name in 'hookshot.exe', 'hookshot_vk.dll') {
         $reader.BaseStream.Position = $offset
         if ($reader.ReadUInt32() -ne 0x4550 -or $reader.ReadUInt16() -ne 0x8664) { throw "Expected Windows x64: $name" }
     } finally { $reader.Dispose() }
+}
+if (!$RuntimeManifest) {
+    $packagedManifest = Join-Path (Split-Path $PSScriptRoot) 'STABLE-RUNTIME-SHA256.txt'
+    if (Test-Path -LiteralPath $packagedManifest -PathType Leaf) { $RuntimeManifest = $packagedManifest }
+}
+if ($RuntimeManifest) {
+    $expected = @{}
+    foreach ($line in Get-Content -LiteralPath $RuntimeManifest) {
+        if ($line -notmatch '^([0-9a-fA-F]{64})  (hookshot\.exe|hookshot_vk\.dll)$' -or $expected.ContainsKey($Matches[2])) {
+            throw 'Invalid stable runtime manifest.'
+        }
+        $expected[$Matches[2]] = $Matches[1]
+    }
+    foreach ($name in 'hookshot.exe', 'hookshot_vk.dll') {
+        $algorithm = [Security.Cryptography.SHA256]::Create()
+        $stream = [IO.File]::OpenRead((Join-Path $source $name))
+        try {
+            $hash = [BitConverter]::ToString($algorithm.ComputeHash($stream)).Replace('-', '')
+        } finally {
+            $stream.Dispose()
+            $algorithm.Dispose()
+        }
+        if (!$expected.ContainsKey($name) -or $hash -ne $expected[$name]) {
+            throw "$name does not match the verified Mako 4.1.1 baseline. Select the original local v0.1.5 build."
+        }
+    }
 }
 $system = Join-Path $env:WINDIR 'System32'
 foreach ($dep in @{

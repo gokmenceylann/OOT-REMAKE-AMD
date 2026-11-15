@@ -30,3 +30,18 @@ An MSIX deployment would add signing and package identity requirements while
 the game stores cache alongside the executable. The preview has its own app
 identity. Publishing a stable release and updating an existing local game
 are separate approval steps.
+
+## v0.1.5 stable local import
+
+Use the v0.1.5 game-import setup or portable ZIP to install an existing
+copy of the original Mako 4.1.1 build into a separate directory. The
+package verifies the exact EXE and Vulkan DLL with
+`STABLE-RUNTIME-SHA256.txt`. An arbitrary rebuild or newer prerelease
+will fail this check. The package does not distribute those binaries,
+game data or AMD SDK DLLs. The tools-only installer remains available
+for building from source and for users without the original binaries.
+
+Setup installs the validated local files and can create a shortcut to
+`hookshot.exe`. Setup and uninstall preserve save and options files.
+For the portable ZIP, use `scripts/Import-LocalGame.ps1 -GameDirectory
+<local-build> -Destination <new-directory>`.

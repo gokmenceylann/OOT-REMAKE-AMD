@@ -1,0 +1,2 @@
+55398f7d9ff34698d01bd249be26e45f79d6dc635d21438cbece6c46788dafac  hookshot.exe
+d21fbd99e39c87781f86980795d8fbf840ac2fe3bc34a5b1c1f5c432aa1b8cd2  hookshot_vk.dll
