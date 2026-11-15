@@ -150,3 +150,68 @@ eş bir rota ölçümü veya görsel doğrulama değildir. 4 ms yalnız
 atlamasına izin verilen işe uygulanır; gerekli işler hâlâ
 bekleyebilir. Deney ayarları yalnızca test sürecinin ortamındaydı.
 Kurulu sürüme veya dağıtım varsayılanlarına uygulanmadı.
+
+## Son öğrenilen pipeline'larla sınırlı başlangıç hazırlığı
+
+`patches/pipeline-recent-warmup.patch`, `Build-LocalGame.ps1`
+tarafından uygulanır. Deneysel `RX_VK_PRECOMPILE_RECENT=64`,
+sürüm damgası doğrulanmış ve tam pipeline anahtarına göre
+tekilleştirilmiş mevcut kayıtlardan en son eklenen 64 kaydı seçer.
+Geçerli aralık 1–128. Mevcut başlangıç ekranını ve precompile
+altyapısını kullanır; en fazla iki worker çalışır. Tam shader
+hazırlığı, tahmin ve genel compute ön hazırlığı bu yolda çalışmaz.
+Başarılı pipeline normal runtime tablosunda tutulur. Başarısız
+derleme hazır kayıt yayımlamaz. Kesilen koşu tam hazırlık işareti
+yazmaz ve eski cache kayıtlarını silmez. Stall sınırından sonra
+worker yeni kayıt almaz; sürücüde başlamış çağrı döndüğünde geç
+sonucu yayımlamadan serbest bırakır. Sürücüde çalışan çağrıya
+zorla müdahale edilmez.
+
+Repo yaması ile önceki yerel kaynak arasında bir varsayılan farkı
+bulundu: repo sürümünde strict AMD cache-only probe, değişken
+yokken de etkin olabiliyordu. Yama bunu raporlanan opt-in
+davranışına getirir. `RX_VK_PIPE_PROBE=1` ile açılır. Test
+koşusunda ayrıca açıkça `RX_VK_PIPE_PROBE=0` kullanıldı.
+Strict draw, olmayan pipeline'ı kullanmaz ve yeni sahnede henüz
+karşılaşılmamış bir anahtar için beklemeye devam edebilir. FG, FSR
+ve Vulkan acquire/present yaşam döngüsü değiştirilmedi.
+
+### Windows ve RX 6700M testi
+
+Windows x64 DLL derlemesi 38 s ve sıfır derleme hatasıyla bitti.
+Sekiz yama sabit upstream revizyonuna sırayla uygulandı.
+Frame-time ölçümü, FG gate, present-ahead ve device-loss testleri
+geçti. Bölgeye özgü pipeline seçimi, kuyruk doluyken yük testi,
+driver timeout ve kapatma yaşam döngüsüne yönelik yeni otomatik
+senaryolar tamamlanmadı.
+
+FG Off, 1536×864 FSR 4.1.2 Native AA ve strict bekleme ile staging
+2.116 geçerli kayıttan 64'ünü yaklaşık 27,7 s’de işledi. Hazırlık
+sırasında süreç private memory sayaçları başlangıçta 1.342 MiB,
+cache açılınca 1.567 MiB ve işten sonra 1.672 MiB gösterdi.
+Kayıt sırasında WDDM'nin GPU adaptörü örneğinde dedicated en çok
+5,39 GiB, shared en çok 1,90 GiB. Bir Vulkan device-local örneği
+5.473 MiB usage / 9.426 MiB budget ve sıfır nihai VMA hatası
+gösterdi. Bunlar farklı sayaçlar ve toplamları alınmadı.
+
+Hyrule Field save'i açıldı ve FSR dispatch'i doğrulandı. Castle
+Town geçişi kabul edildi; sunum tekrar durdu (frame 2305, 0 FPS).
+Sunum iş parçacığında 28 yavaş derleme, toplam 30.626 ms ve en uzun
+2.293 ms kaydedildi. Eşik üstü loglanan anahtarlarda ön hazırlık
+worker'ları ile sunum iş parçacığı arasında örtüşme görülmedi.
+Son eklenme sırası bu koşuda sahne ihtiyacını kapsamaya yetmedi.
+
+Menü, hazırlık ve yükleme dahil 3.149 CSV aralığı ölçüldü:
+P50 17,24 ms, P95 34,92 ms, P99 48,08 ms, maksimum 14.654 ms.
+870 aralık 33,3 ms, 29 aralık 50 ms ve 18 aralık 100 ms üzerindeydi.
+Terminal donma son aralıkta yok. Bu koşu önceki kayıtla eş koşullu
+olmadığından fark performans artışı olarak yorumlanamaz.
+Castle Town, Temple of Time ve FG Auto kabul testleri geçmedi
+veya tamamlanmadı. Pipeline miss beklemesini tamamen kaldıran
+kalıcı mimari bu aşamada doğrulanmadı.
+
+Ayrı test EXE'si
+`D:\codex\OOT-REMAKE-AMD\pipeline-recent-staging\hookshot.exe`.
+Deney seçeneği test sürecinin ortamında kullanıldı. Yerel kurulum
+ve kararlı dağıtım güncellenmedi. Seçeneği kullanmadan EXE'yi
+yeniden başlatmak, normal başlatma yoluna döner.
