@@ -1,0 +1,57 @@
+--- a/gpu/vk/vk_draw.cpp
++++ b/gpu/vk/vk_draw.cpp
+@@ -9387,10 +9387,50 @@
+     }
+     if (recent_limit) {
+         const size_t available = notes.size();
+-        if (available > recent_limit) notes.erase(notes.begin(), notes.end() - recent_limit);
+-        std::reverse(notes.begin(), notes.end());
+-        logf("vk: recent pipeline warmup: %zu of %zu learned pipelines, newest first (no broad shader prepare)",
+-             notes.size(), available);
++        const char* region = getenv("RX_VK_PRECOMPILE_REGION");
++        if (region && *region) {
++            if (strcmp(region, "CastleTown") && strcmp(region, "TempleOfTime") && strcmp(region, "HyruleField")) {
++                logf("vk: region pipeline warmup: unknown region; skipped");
++                return;
++            }
++            const auto path = cache_path((std::string("hookshot_pipeline_region_") + region + ".txt").c_str());
++            char header[96], expected[96];
++            snprintf(expected, sizeof expected, "OOT_PIPELINE_REGION_1 %x %x %x",
++                     dev.props.vendorID, dev.props.deviceID, dev.props.driverVersion);
++            std::unique_ptr<FILE, decltype(&fclose)> file(fopen(path.c_str(), "rb"), fclose);
++            if (!file || !fgets(header, sizeof header, file.get()) || !strchr(header, '\n')) {
++                logf("vk: region pipeline warmup: missing profile for %s", region);
++                return;
++            }
++            header[strcspn(header, "\r\n")] = 0;
++            if (strcmp(header, expected)) {
++                logf("vk: region pipeline warmup: incompatible profile for %s", region);
++                return;
++            }
++            std::unordered_map<uint64_t, std::unique_ptr<PipeNote>> by_key;
++            for (auto& note : notes) {
++                const uint64_t key = note->key;
++                by_key.emplace(key, std::move(note));
++            }
++            notes.clear();
++            size_t read = 0;
++            char line[32];
++            while (notes.size() < recent_limit && read++ < 256 && fgets(line, sizeof line, file.get())) {
++                if (!strchr(line, '\n')) break;
++                line[strcspn(line, "\r\n")] = 0;
++                if (strlen(line) != 16 || strspn(line, "0123456789abcdef") != 16) continue;
++                const auto it = by_key.find(std::strtoull(line, nullptr, 16));
++                if (it == by_key.end()) continue;
++                notes.push_back(std::move(it->second));
++                by_key.erase(it);
++            }
++            logf("vk: region pipeline warmup: %s, %zu of %zu learned pipelines matched", region, notes.size(), available);
++        } else {
++            if (available > recent_limit) notes.erase(notes.begin(), notes.end() - recent_limit);
++            std::reverse(notes.begin(), notes.end());
++            logf("vk: recent pipeline warmup: %zu of %zu learned pipelines, newest first (no broad shader prepare)",
++                 notes.size(), available);
++        }
+         if (notes.empty()) return;
+     }
+     std::unordered_set<uint64_t> wanted;
