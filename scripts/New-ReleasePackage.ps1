@@ -8,8 +8,8 @@ param(
     [switch]$StableImport
 )
 $ErrorActionPreference = 'Stop'
-if ($StableImport -and (!$GameImport -or $Version -ne 'v0.1.5')) {
-    throw 'The verified stable import package is available for v0.1.5.'
+if ($StableImport -and (!$GameImport -or $Version -notin 'v0.1.5', 'v0.2.0-rc.3')) {
+    throw 'The verified baseline importer is available for v0.1.5 and v0.2.0-rc.3.'
 }
 $repo = Split-Path $PSScriptRoot
 $out = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($OutputDirectory)
@@ -43,6 +43,11 @@ try {
         $destination = Join-Path $payload $relative
         [void][IO.Directory]::CreateDirectory((Split-Path $destination))
         Copy-Item -LiteralPath $source -Destination $destination
+    }
+    if ($Version -eq 'v0.2.0-rc.3' -and $StableImport) {
+        foreach ($relative in 'docs/recomp-source-provenance.md', 'docs/mako-411-baseline-validation.md') {
+            Copy-Item -LiteralPath (Join-Path $repo $relative) -Destination (Join-Path $payload $relative)
+        }
     }
     if ($StableImport) {
         Copy-Item -LiteralPath (Join-Path $repo 'installer/v0.1.5-runtime-sha256.txt') -Destination (Join-Path $payload 'STABLE-RUNTIME-SHA256.txt')

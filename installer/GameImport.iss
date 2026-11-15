@@ -1,5 +1,7 @@
 [Setup]
-#ifdef StableRuntimeManifest
+#if PackageVersion == "0.2.0-rc.3"
+AppId=OOT-REMAKE-AMD-Baseline-Research
+#elif defined(StableRuntimeManifest)
 AppId=OOT-REMAKE-AMD-Stable-GameImport
 #else
 AppId=OOT-REMAKE-AMD-GameImport

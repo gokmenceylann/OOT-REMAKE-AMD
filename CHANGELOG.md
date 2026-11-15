@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.2.0-rc.3
+
+- Packaged a new Windows baseline importer for the verified v0.1.5 local runtime.
+- Added Mako and Longshot source provenance and RX 6700M gameplay measurements.
+- Updated the bilingual project overview. Runtime binaries are shared with the v0.1.5 baseline.
+
 ## v0.1.5
 
 - Updated the pinned Mako source to 4.1.1 and rebased the Vulkan patches.
