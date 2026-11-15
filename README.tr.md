@@ -2,13 +2,14 @@
 
 Mako 4.1.1 ve onun Hookshot/Longshot geçmişi üzerine kurulu Windows 11 x64 Ocarina of Time recomp projesi. AArch64 statik yeniden derleme, Horizon servisleri ve NVN2 → Vulkan çizimi kullanır. Oyun doğrudan `hookshot.exe` ile açılır.
 
-[Kararlı v0.1.5](https://github.com/gokmenceylann/OOT-REMAKE-AMD/releases/tag/v0.1.5) · [Araştırma ön yayını](https://github.com/gokmenceylann/OOT-REMAKE-AMD/releases/tag/v0.2.0-rc.3) · [English](README.md)
+[Kararlı v0.1.6](https://github.com/gokmenceylann/OOT-REMAKE-AMD/releases/tag/v0.1.6) · [Araştırma ön yayını](https://github.com/gokmenceylann/OOT-REMAKE-AMD/releases/tag/v0.2.0-rc.3) · [English](README.md)
 
 ## Hangi sürüm?
 
 | Sürüm | Kullanım |
 | --- | --- |
-| **v0.1.5, kararlı taban** | İlk doğrulanmış Mako 4.1.1 derlemesini geri yükleme ve içe aktarma. GitHub Latest sürümü. |
+| **v0.1.6, kararlı sürüm** | Doğrulanmış yerel Mako 4.1.1 kurulumunu yeniden derlenen Vulkan DLL ile içe aktarma. GitHub Latest sürümü. |
+| **v0.1.5, ilk taban** | İlk doğrulanmış Mako 4.1.1 EXE/DLL çiftine geri dönüş. |
 | **v0.2.0-rc.3, araştırma ön yayını** | Aynı doğrulanmış yerel derleme için yeni Windows içe aktarma paketi, kaynak kökeni ve RX 6700M ölçüm raporu. |
 | **v0.2.0-rc.1 / rc.2** | Eski önizlemeler. rc.2 için Castle Town takılması ve geometri sorunları belgelenmiş durumda. |
 

@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.1.6
+
+- Released the verified Mako 4.1.1 EXE and rebuilt Vulkan renderer as a local import workflow.
+- Added Windows setup and portable packages with exact runtime hashes and optional locally supplied AMD FSR Vulkan DLLs.
+- [Source, installation and verification](https://github.com/gokmenceylann/OOT-REMAKE-AMD/blob/v0.1.6/docs/stable-v0.1.6.md)
+
 ## v0.2.0-rc.3
 
 - Packaged a new Windows baseline importer for the verified v0.1.5 local runtime.

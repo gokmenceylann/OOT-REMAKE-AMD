@@ -2,13 +2,14 @@
 
 Windows 11 x64 project for a locally built Ocarina of Time recompilation. It uses Mako 4.1.1 and its Hookshot/Longshot ancestry for AArch64 static recompilation, Horizon host services and NVN2-to-Vulkan rendering. The game starts directly from `hookshot.exe`.
 
-[Stable v0.1.5](https://github.com/gokmenceylann/OOT-REMAKE-AMD/releases/tag/v0.1.5) · [Research preview](https://github.com/gokmenceylann/OOT-REMAKE-AMD/releases/tag/v0.2.0-rc.3) · [Türkçe](README.tr.md)
+[Stable v0.1.6](https://github.com/gokmenceylann/OOT-REMAKE-AMD/releases/tag/v0.1.6) · [Research preview](https://github.com/gokmenceylann/OOT-REMAKE-AMD/releases/tag/v0.2.0-rc.3) · [Türkçe](README.tr.md)
 
 ## Choose a release
 
 | Release | Use |
 | --- | --- |
-| **v0.1.5 stable baseline** | Restore or import the verified original Mako 4.1.1 runtime. It remains the default GitHub release. |
+| **v0.1.6 stable** | Import the verified local Mako 4.1.1 installation with its rebuilt Vulkan DLL. This is the default GitHub release. |
+| **v0.1.5 original baseline** | Restore the first verified Mako 4.1.1 EXE/DLL pair. |
 | **v0.2.0-rc.3 research preview** | New Windows importer package for the same verified runtime, with source provenance and an RX 6700M baseline report. |
 | **v0.2.0-rc.1 / rc.2** | Older previews. rc.2 has documented Castle Town stutter and geometry issues. |
 
