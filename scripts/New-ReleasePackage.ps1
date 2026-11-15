@@ -1,17 +1,23 @@
 #Requires -Version 5.1
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory)][ValidatePattern('\Av\d+\.\d+\.\d+\z')][string]$Version,
+    [Parameter(Mandatory)][ValidatePattern('\Av\d+\.\d+\.\d+(?:-rc\.[1-9]\d*)?\z')][string]$Version,
     [Parameter(Mandatory)][string]$OutputDirectory,
-    [string]$InnoCompiler
+    [string]$InnoCompiler,
+    [switch]$GameImport,
+    [switch]$StableImport
 )
 $ErrorActionPreference = 'Stop'
+if ($StableImport -and (!$GameImport -or $Version -notin 'v0.1.5', 'v0.1.6', 'v0.2.0-rc.3')) {
+    throw 'The verified baseline importer is available for v0.1.5, v0.1.6 and v0.2.0-rc.3.'
+}
 $repo = Split-Path $PSScriptRoot
 $out = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($OutputDirectory)
 [void][IO.Directory]::CreateDirectory($out)
-$base = "OOT-REMAKE-AMD-$Version"
-$zip = Join-Path $out "$base-tools.zip"
-$setup = Join-Path $out "$base-tools-setup.exe"
+$variant = if ($GameImport) { 'game-import' } else { 'tools' }
+$base = "OOT-REMAKE-AMD-$Version-$variant"
+$zip = Join-Path $out "$base.zip"
+$setup = Join-Path $out "$base-setup.exe"
 $checksums = Join-Path $out 'SHA256SUMS.txt'
 foreach ($file in @($zip, $setup, $checksums)) {
     if (Test-Path -LiteralPath $file) { throw "Output already exists: $file" }
@@ -26,7 +32,7 @@ try {
         'CHANGELOG.md', 'docs/install.md', 'docs/mako-build.md', 'docs/fsr-4.1.2.md',
         'docs/fsr-context-recovery.md', 'docs/known-issues.md', 'docs/troubleshooting.md',
         'docs/memory-telemetry.md', 'docs/vulkan-memory.md', 'docs/validation-rx6700m.md',
-        'docs/release.md', 'CONTRIBUTING.md', 'scripts/Test-LocalGame.ps1', 'scripts/Measure-FrameTimes.ps1', 'scripts/Capture-VulkanSession.ps1', 'docs/fsr-profiling.md', 'docs/amd-compatibility.md', 'upstream/mako/LICENSE'
+        'docs/release.md', 'CONTRIBUTING.md', 'scripts/Test-LocalGame.ps1', 'scripts/Import-LocalGame.ps1', 'scripts/Measure-FrameTimes.ps1', 'scripts/Capture-VulkanSession.ps1', 'docs/fsr-profiling.md', 'docs/amd-compatibility.md', 'upstream/mako/LICENSE'
     )
     foreach ($relative in $files) {
         $source = Join-Path $repo $relative
@@ -38,15 +44,33 @@ try {
         [void][IO.Directory]::CreateDirectory((Split-Path $destination))
         Copy-Item -LiteralPath $source -Destination $destination
     }
+    if ($Version -eq 'v0.2.0-rc.3' -and $StableImport) {
+        foreach ($relative in 'docs/recomp-source-provenance.md', 'docs/mako-411-baseline-validation.md') {
+            Copy-Item -LiteralPath (Join-Path $repo $relative) -Destination (Join-Path $payload $relative)
+        }
+    }
+    if ($StableImport) {
+        $runtimeTag = if ($Version -eq 'v0.1.6') { $Version } else { 'v0.1.5' }
+        Copy-Item -LiteralPath (Join-Path $repo "installer/$runtimeTag-runtime-sha256.txt") -Destination (Join-Path $payload 'STABLE-RUNTIME-SHA256.txt')
+    }
+    if ($StableImport -and $Version -eq 'v0.1.6') {
+        foreach ($relative in 'docs/UPSTREAM-PROVENANCE.md', 'docs/THIRD-PARTY-COMPONENTS.md', 'docs/stable-v0.1.6.md') {
+            Copy-Item -LiteralPath (Join-Path $repo $relative) -Destination (Join-Path $payload $relative)
+        }
+    }
     Set-Content -LiteralPath (Join-Path $payload 'VERSION.txt') -Value $Version -Encoding ASCII
-    $archive = Join-Path $stage "$base-tools.zip"
+    $archive = Join-Path $stage "$base.zip"
     Compress-Archive -Path (Join-Path $payload '*') -DestinationPath $archive
     $artifacts = @($archive)
     if ($InnoCompiler) {
         $compiler = (Resolve-Path -LiteralPath $InnoCompiler).Path
-        & $compiler "/DPackageVersion=$($Version.Substring(1))" "/DPayload=$payload" "/O$stage" "/F$base-tools-setup" (Join-Path $repo 'installer/Tools.iss')
+        $definition = if ($GameImport) { 'installer/GameImport.iss' } else { 'installer/Tools.iss' }
+        $compilerArgs = @("/DPackageVersion=$($Version.Substring(1))", "/DPayload=$payload", "/O$stage", "/F$base-setup")
+        if ($StableImport) { $compilerArgs += '/DStableRuntimeManifest=1' }
+        $compilerArgs += Join-Path $repo $definition
+        & $compiler @compilerArgs
         if ($LASTEXITCODE -ne 0) { throw "ISCC failed with exit code $LASTEXITCODE." }
-        $artifacts += Join-Path $stage "$base-tools-setup.exe"
+        $artifacts += Join-Path $stage "$base-setup.exe"
     }
     $entries = foreach ($artifact in $artifacts) {
         $hash = Get-FileHash -LiteralPath $artifact -Algorithm SHA256

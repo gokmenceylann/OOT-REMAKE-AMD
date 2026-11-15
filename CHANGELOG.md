@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.1.6
+
+- Verified rebuilt Mako 4.1.1 Vulkan renderer with the original Windows x64 game EXE.
+- Added exact-runtime local import installer and portable package with optional locally supplied AMD FSR Vulkan DLL pair.
+- Added Windows worker failure and Vulkan import rollback regression gates.
+
 ## v0.1.5
 
 - Updated the pinned Mako source to 4.1.1 and rebased the Vulkan patches.
