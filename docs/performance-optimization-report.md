@@ -95,3 +95,40 @@ performansı doğrulanamadı.
 Çalışan kurulumun dosyalarına dokunulmadı. Son aday Installer veya
 kararlı Release olarak yayımlanmadı. Yeni Frame Generation SDK
 entegrasyonu, tamamlanmış oyun testi koşuluna bağlı olarak bekliyor.
+
+## Yerel kurulumda Temple of Time (15 Kasım 2026)
+
+RX 6700M üzerindeki 2:17 OBS kaydında Temple of Time save'i açıldı.
+Video zamanına göre 00:05.67–00:51.33 arasında oyun alanı siyahtı
+(45,67 saniye). Görüntü geldikten sonra takılmalar sürdü. Örneğin
+01:17.00–01:31.43 aralığında, FG Auto açıkken, ekranın orta bölümünde
+14,43 saniye boyunca çok az görüntü değişimi ölçüldü. Bu ölçüm
+FFmpeg blackdetect/freezedetect ve kare örneklerine dayanır.
+Hareketsiz sahneler de freezedetect'e takılabildiğinden bu süreler
+Vulkan present veya GPU bekleme süresi olarak kullanılmaz.
+
+Çıkış menüde 1920×1080 görünüyordu. Kayıt içinde FSR 3.1 ve FSR 4,
+1536×864 ve 1408×792 iç çözünürlükler, ayrıca FG Auto (Built-in FG)
+ve Off kullanıldı. Bir örnekte yaklaşık 52 temel FPS ve 144 sunulan
+FPS vardı. FG kapalı sonraki kesitte sayaç yaklaşık 53–58 FPS gösterdi.
+Bu değerler tekil gözlemlerdir. Ayarlar değiştiği için eş koşullu
+FSR karşılaştırması veya P95/P99 çıkarılamaz. Menüdeki FSR 4 seçimi,
+gerçek SDK provider dispatch'ini tek başına doğrulamaz.
+
+### Açık sorun ve sonraki ölçüm
+
+Save yüklemesindeki uzun siyah bekleme ve sahne içi takılmalar açık.
+Önceki otomatik Castle Town denemesinde FG kapalıyken 16 saniyeyi
+bulan pipeline derlemesi kaydedildi. Temple of Time videosu için
+eşzamanlı renderer logu olmadığı için aynı neden henüz doğrulanamadı.
+
+Bir sonraki ölçümde aynı Temple of Time save'i ve rota, aynı FSR ve
+iç çözünürlük ile önce FG Off, sonra FG Auto çalıştırılacak. İlk kontrol
+save onayından ilk oynanabilir kareye kadar geçen süreyi, sonraki
+kontrol aynı hareket rotasındaki present aralıklarını karşılaştıracak.
+'Capture-VulkanSession.ps1 -PerformanceAudit' çıktısında uzun
+graphics pipeline ve job wait süreleri, Vulkan acquire/present
+beklemeleri ve gerçek FSR provider dispatch'i kayıtla eşleştirilecek.
+'RX_VK_PIPE_SKIP=0' mevcut çalışmada korunur. Bu ayarı değiştiren deney
+ayrı kopyada yapılmalıdır, çünkü atlanan draw'lar önceki beyaz-yeşil
+yüzey sorununu yeniden ortaya çıkarabilir.
