@@ -108,3 +108,26 @@ Bu değişiklik, sunum alımı sırasında belirlenen bloklama yolunu düzeltir.
 Castle Town videosundaki donmanın aynı yoldan kaynaklandığı henüz
 doğrulanmadı. Aynı rotada Auto ile yeniden test edin ve önceki koşuyla
 karşılaştırın.
+
+## 15 Kasım Castle Town ve Frame Generation testleri
+
+| Koşu | Sonuç | Ölçüm |
+| --- | --- | --- |
+| Önceki renderer, FG Auto | Görüntü yaklaşık 01:36'da sabitlendi ve yaklaşık 19 saniye çok az değişti. Oyun pencere kapatılırken normal çıkış kaydetti. | Son tam pencere CPU replay 26,68 ms, GPU 16,8 ms, Present çağrısı 0,30 ms. Kapanışa yakın grafik pipeline derlemelerinden biri 6,01 saniye sürdü. |
+| Önceki renderer, FG Off | Kullanıcı aynı donmayı görmedi. Çıkış kodu 0. FSR 4.1.2 Native AA aktifti. | Seçilen 57,87 saniyelik Castle Town penceresi, 1.800 aralık, ortalama 31,1 FPS, P95 46,79 ms, P99 59,57 ms. |
+| FG sunum düzeltmesi, ayrı test kopyası, FG Auto | 31 saniyelik videoda uzun sabit görüntü görülmedi. Beyaz-yeşil yüzeyler ve eksik geometri vardı. Oturum çıkış kodu 0. | Video sırasında örneklenen pencerelerde kare başına 524–734 hazır olmayan çizim atlandı. Derleme kuyruğu 633'e çıktı. Logdaki en uzun grafik pipeline derlemelerinden biri 14,95 saniye sürdü. |
+
+Son koşu FSR 4.1.2 Native AA'yı 1536×864 giriş ve çıkışta doğruladı.
+Nihai VMA tahsis hatası kaydedilmedi. Atlanan çizimler görüntü bozulmasıyla
+aynı zaman aralığında görülüyor. Bu bulgu pipeline hazır olma durumunu
+birincil inceleme adayı yapıyor. Tek koşu, beyaz-yeşil piksellerin hangi shader
+veya hedefte üretildiğini kanıtlamıyor.
+
+Kurulu sürümde aynı shader cache ve FG Auto ile kontrol için
+`hookshot_env.txt` dosyasına `RX_VK_PIPE_SKIP=0` eklendi. Bu Mako ayarı,
+hazır olmayan grafik pipeline'ını bekletir. Yeni bir alanın ilk
+yüklemesinde bekleme uzayabilir. Ayarı geri almak için yalnızca bu satırı
+kaldırıp oyunu yeniden başlatın. Önceki ayrı kontrolde bu ayarla save
+açıldı, FSR 4.1.2 aktifti ve örneklenen pencerelerde atlanan çizim 0–0,2
+oldu. Güncel Castle Town rotasında beyaz-yeşil görüntünün durumu görsel
+olarak yeniden kontrol edilmeli.
