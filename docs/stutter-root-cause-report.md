@@ -215,3 +215,11 @@ Ayrı test EXE'si
 Deney seçeneği test sürecinin ortamında kullanıldı. Yerel kurulum
 ve kararlı dağıtım güncellenmedi. Seçeneği kullanmadan EXE'yi
 yeniden başlatmak, normal başlatma yoluna döner.
+
+## Bölge profili denemesi
+
+Castle Town'ın önceki geçişinde görülen 28 pipeline anahtarı
+doğrudan seçildi. Staging, profili 440 ms'de işledi. Sonraki
+geçişte farklı anahtarların derlemesi yine sunumu kesti.
+Oyun içi kararlı 30 FPS ve görsel bütünlük doğrulanmadı.
+[Ayrıntılı ölçüm ve kullanım](region-pipeline-warmup-report.md).
