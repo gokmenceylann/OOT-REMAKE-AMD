@@ -22,6 +22,7 @@ $patches = @(
     (Join-Path $repo 'patches/pipeline-slow-key.patch'),
     (Join-Path $repo 'patches/pipeline-recent-warmup.patch'),
     (Join-Path $repo 'patches/pipeline-region-warmup.patch'),
+    (Join-Path $repo 'patches/pipeline-region-use.patch'),
     (Join-Path $repo 'patches/fg-incomplete-frame.patch')
 )
 if ($EnableFsr412) { $patches += Join-Path $repo 'patches/fsr-4.1.2.patch' }

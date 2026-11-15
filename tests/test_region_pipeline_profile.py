@@ -3,7 +3,8 @@ from pathlib import Path
 import unittest
 
 
-profile = runpy.run_path(str(Path(__file__).resolve().parents[1] / "scripts/Export-RegionPipelineProfile.py"))["profile"]
+exporter = runpy.run_path(str(Path(__file__).resolve().parents[1] / "scripts/Export-RegionPipelineProfile.py"))
+profile = exporter["profile"]
 GPU = "[hos host] vk: capability device=GPU vendor=0x1002 deviceID=0x73df API=1.4.315 driver=0x800161"
 
 
@@ -30,6 +31,22 @@ class RegionProfileTest(unittest.TestCase):
             profile([GPU, start, work("0000000000000001", 500)], "CastleTown")
         with self.assertRaises(ValueError):
             profile([GPU, GPU.replace("800161", "abcdef")], "CastleTown")
+
+
+    def test_successful_usage_and_multiple_captures(self):
+        collect = exporter["collect"]
+        combine = exporter["format_profile"]
+        mark = "[hos guest] map: Market_Child (child)"
+        adult = "[hos guest] map: Market_Adult (adult)"
+        graphic = "0000000000000001"
+        compute = "c 0000000000000002 0000000000000003"
+        other = "0000000000000004"
+        first = collect([GPU, mark, f"vk: region pipeline use g {graphic}", f"vk: region pipeline use {compute}",
+                         adult, f"vk: region pipeline use g {other}"], "CastleTown", "child")
+        second = collect([GPU, mark, work(other, 800)], "CastleTown")
+        self.assertEqual(combine([first, second]).splitlines()[1:], [other, compute, graphic])
+        with self.assertRaises(ValueError):
+            combine([first, (("1002", "73df", "abcd"), second[1])])
 
 
 if __name__ == "__main__":

@@ -1,0 +1,152 @@
+--- a/gpu/vk/vk_draw.cpp
++++ b/gpu/vk/vk_draw.cpp
+@@ -2387,6 +2387,26 @@
+ 
+ bool predicted_key(uint64_t key);   // (the predicted pipelines' keys, below)
+ void predicted_use(int how);
++// Capture mode: a key is emitted once per replay thread per 60-frame window. The exporter
++// combines windows and region markers; no shared lock or disk file is added to ordinary draws.
++static void region_use(bool compute, uint64_t key, uint64_t variant = 0) {
++    const uint64_t window = texture_frame_no() / 60;
++    static thread_local uint64_t last_window = ~0ull;
++    static thread_local std::unordered_set<uint64_t> graphics;
++    static thread_local std::unordered_map<uint64_t, std::unordered_set<uint64_t>> computes;
++    if (last_window != window) {
++        graphics.clear();
++        computes.clear();
++        last_window = window;
++    }
++    if (compute) {
++        if (computes[key].insert(variant).second)
++            logf("vk: region pipeline use c %016llx %016llx", (unsigned long long)key, (unsigned long long)variant);
++    } else if (graphics.insert(key).second) {
++        logf("vk: region pipeline use g %016llx", (unsigned long long)key);
++    }
++}
++
+ PipeEntry* graphics_pipeline(const Program& p, const NvnState& s, const Targets& at, VkPrimitiveTopology topo, const uint8_t color_types[8]) {
+     // the key: what is baked into it (the rest is dynamic state)
+     // (hookshot: and which variant: p.key is the same for all the variants of a program by its textures' types, and a draw of
+@@ -7556,6 +7576,10 @@
+     if (use.on) use.pipeline_made(pe->how.load(std::memory_order_relaxed));
+     const VkPipeline pl = pe->pipeline;
+     if (!pl) SKIP_HERE();
++    const auto count_region_draw = [&] {
++        static const bool trace = env_on("RX_VK_PIPE_REGION_TRACE");
++        if (trace) region_use(false, pipeline_key(p, s, at, topo));
++    };
+     cur_program = &p;
+     dlss_trace_draw(s, p, d, at);
+     skin_check(s, p, d, at);
+@@ -7857,6 +7881,7 @@
+             occ.issue();
+             vkCmdDrawIndirect(cmd, fallback_draw_records, 0, 1, sizeof(VkDrawIndirectCommand));   // (its count: the records taken)
+             st_mesh++;
++            count_region_draw();
+             st_draws++, ps.draws++;
+             return;
+         }
+@@ -7923,6 +7948,7 @@
+                     vkCmdDrawMeshTasksIndirectEXT(cmd, mesh_conv_buf, mesh_conv_off, conv_n, 12);
+                 mesh_conv_buf = VK_NULL_HANDLE;
+                 st_mesh++;
++                count_region_draw();
+                 st_draws++, ps.draws++;
+                 return;
+             }
+@@ -7956,6 +7982,7 @@
+                                   (uint32_t)std::max(d.groups[2], 1));
+         }
+         st_mesh++;
++        count_region_draw();
+         st_draws++, ps.draws++;
+         return;
+     }
+@@ -8063,6 +8090,7 @@
+         occ.issue();
+         vkCmdDrawIndexed(cmd, quads * 6, (uint32_t)std::max(1, d.instances), 0, d.indexed ? d.base_vertex : 0,
+                          (uint32_t)d.base_instance);
++        count_region_draw();
+         st_draws++, ps.draws++;
+         return;
+     }
+@@ -8112,6 +8140,7 @@
+         occ.issue();
+         vkCmdDraw(cmd, (uint32_t)d.count, (uint32_t)std::max(1, d.instances), (uint32_t)d.first, (uint32_t)d.base_instance);
+     }
++    count_region_draw();
+     st_draws++, ps.draws++;
+ }
+ 
+@@ -9385,6 +9414,8 @@
+         std::lock_guard lk(state_mu);
+         if (!state_file) state_open_locked();
+     }
++    std::unordered_map<uint64_t, std::unordered_set<uint64_t>> region_compute;
++    size_t compute_count = 0;
+     if (recent_limit) {
+         const size_t available = notes.size();
+         const char* region = getenv("RX_VK_PRECOMPILE_REGION");
+@@ -9414,27 +9445,37 @@
+             }
+             notes.clear();
+             size_t read = 0;
+-            char line[32];
+-            while (notes.size() < recent_limit && read++ < 256 && fgets(line, sizeof line, file.get())) {
++            char line[48];
++            while (notes.size() + compute_count < recent_limit && read++ < 256 && fgets(line, sizeof line, file.get())) {
+                 if (!strchr(line, '\n')) break;
+                 line[strcspn(line, "\r\n")] = 0;
+-                if (strlen(line) != 16 || strspn(line, "0123456789abcdef") != 16) continue;
++                constexpr const char* hex = "0123456789abcdef";
++                if (line[0] == 'c' && strlen(line) == 35 && line[1] == ' ' && line[18] == ' ' &&
++                    strspn(line + 2, hex) == 16 && strspn(line + 19, hex) == 16) {
++                    const auto key = std::strtoull(line + 2, nullptr, 16);
++                    const auto variant = std::strtoull(line + 19, nullptr, 16);
++                    if (compute_count < 16 && region_compute[key].insert(variant).second) ++compute_count;
++                    continue;
++                }
++                if (strlen(line) != 16 || strspn(line, hex) != 16) continue;
+                 const auto it = by_key.find(std::strtoull(line, nullptr, 16));
+                 if (it == by_key.end()) continue;
+                 notes.push_back(std::move(it->second));
+                 by_key.erase(it);
+             }
+-            logf("vk: region pipeline warmup: %s, %zu of %zu learned pipelines matched", region, notes.size(), available);
++            logf("vk: region pipeline warmup: %s, %zu of %zu learned graphics pipelines matched, %zu compute variants requested",
++                 region, notes.size(), available, compute_count);
+         } else {
+             if (available > recent_limit) notes.erase(notes.begin(), notes.end() - recent_limit);
+             std::reverse(notes.begin(), notes.end());
+             logf("vk: recent pipeline warmup: %zu of %zu learned pipelines, newest first (no broad shader prepare)",
+                  notes.size(), available);
+         }
+-        if (notes.empty()) return;
++        if (notes.empty() && region_compute.empty()) return;
+     }
+     std::unordered_set<uint64_t> wanted;
+     for (const auto& n : notes) wanted.insert(n->prog);
++    for (const auto& entry : region_compute) wanted.insert(entry.first);
+     // (the compute programs: those this install's play dispatched (hookshot_computes.bin) and those the shipped state list names,
+     // each once; every kept one on a first start, with nothing dispatched yet: computes_plan)
+     const ComputePlan plan = computes_plan(recent_limit ? "none" : getenv("RX_VK_PRECOMPILE_COMPUTES"), !env_on("RX_VK_NO_STATE_LIST"));
+@@ -9444,6 +9485,10 @@
+     const size_t programs_n = program_cache_load_some(wanted, [&](Program& p) {
+         ensure_layout(p);
+         if (p.compute) {
++            if (recent_limit) {
++                const auto it = region_compute.find(p.key);
++                if (it == region_compute.end() || !it->second.contains(p.variant)) return;
++            }
+             computes.push_back(&p);
+             if (plan.keys.count(p.key)) listed_here.insert(p.key);
+         } else if (p.fallback && !recent_limit) fallbacks.push_back(&p);   // (hookshot: the mesh fallback's compute pipelines too, before play)
+@@ -10429,6 +10474,8 @@
+             vkCmdDispatch(cmd, x, y, z);
+         }
+     }
++    static const bool trace_region = env_on("RX_VK_PIPE_REGION_TRACE");
++    if (trace_region) region_use(true, p.key, p.variant);
+     if (dump_on() && dump_ssbo_wanted(p.key)) dump_ssbos(cmd, p, "after");
+     if (gprof_on()) {
+         char label[96];
