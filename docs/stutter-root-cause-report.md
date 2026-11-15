@@ -128,3 +128,25 @@ Tanılama tekrarında capture'a `-PerformanceAudit` ekleyin ve
 `RX_VK_FRAME_TRACE=1` ile `pipe_wait_ms`, `left_out`, tam
 pipeline anahtarı, VkResult, FSR provider ve memory loglarını
 zamanla eşleştirin. WDDM verisini adaptör örneğine göre ayırın.
+
+### Ön hazırlık ve kısa bekleme denemesi
+
+Yeni manuel oturumun logu, eski `hookshot_prepare_skipped`
+işaretinin shader hazırlığını atladığını doğruladı. İşaret yalnızca
+staging'de yedeklenerek ön hazırlık açıldı. 38.809 işlik hazırlık
+başladı ve bir dakikanın üzerinde hâlâ %0 gösterdi. Tamamlanmadan
+kapatıldı ve işaret staging'e geri kondu. Bu koşu, ön hazırlığın
+rota performansına etkisini doğrulamadı.
+
+Ardından aynı staging'de FG Off, FSR 4.1.2 Native AA ve yalnızca
+atlamasına izin verilen çizimlerde kare başına 4 ms bekleme denendi
+(`RX_VK_PIPE_SKIP=1`, `RX_VK_PIPE_WAIT_MS=4`, probe ve quick
+kapalı). FSR 4.1.2 dispatch'i devam etti. Hyrule Field'da oyun
+ilerledi, Castle Town komutu geçişi tamamlamadı ve son durumda
+2696. karede 0 FPS/stalled raporlandı. Frame trace 2.681 satırda
+11.941 bekleyen iş atlaması ve tek satırda 1.163 atlama gösterdi.
+Ekran görüntüsü isteği zaman aşımına uğradı. Bu deneme sıkı koşuyla
+eş bir rota ölçümü veya görsel doğrulama değildir. 4 ms yalnız
+atlamasına izin verilen işe uygulanır; gerekli işler hâlâ
+bekleyebilir. Deney ayarları yalnızca test sürecinin ortamındaydı.
+Kurulu sürüme veya dağıtım varsayılanlarına uygulanmadı.
