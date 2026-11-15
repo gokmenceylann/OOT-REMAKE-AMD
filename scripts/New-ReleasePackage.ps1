@@ -1,17 +1,19 @@
 #Requires -Version 5.1
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory)][ValidatePattern('\Av\d+\.\d+\.\d+\z')][string]$Version,
+    [Parameter(Mandatory)][ValidatePattern('\Av\d+\.\d+\.\d+(?:-rc\.[1-9]\d*)?\z')][string]$Version,
     [Parameter(Mandatory)][string]$OutputDirectory,
-    [string]$InnoCompiler
+    [string]$InnoCompiler,
+    [switch]$GameImport
 )
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path $PSScriptRoot
 $out = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($OutputDirectory)
 [void][IO.Directory]::CreateDirectory($out)
-$base = "OOT-REMAKE-AMD-$Version"
-$zip = Join-Path $out "$base-tools.zip"
-$setup = Join-Path $out "$base-tools-setup.exe"
+$variant = if ($GameImport) { 'game-import' } else { 'tools' }
+$base = "OOT-REMAKE-AMD-$Version-$variant"
+$zip = Join-Path $out "$base.zip"
+$setup = Join-Path $out "$base-setup.exe"
 $checksums = Join-Path $out 'SHA256SUMS.txt'
 foreach ($file in @($zip, $setup, $checksums)) {
     if (Test-Path -LiteralPath $file) { throw "Output already exists: $file" }
@@ -26,7 +28,7 @@ try {
         'CHANGELOG.md', 'docs/install.md', 'docs/mako-build.md', 'docs/fsr-4.1.2.md',
         'docs/fsr-context-recovery.md', 'docs/known-issues.md', 'docs/troubleshooting.md',
         'docs/memory-telemetry.md', 'docs/vulkan-memory.md', 'docs/validation-rx6700m.md',
-        'docs/release.md', 'CONTRIBUTING.md', 'scripts/Test-LocalGame.ps1', 'scripts/Measure-FrameTimes.ps1', 'scripts/Capture-VulkanSession.ps1', 'docs/fsr-profiling.md', 'docs/amd-compatibility.md', 'upstream/mako/LICENSE'
+        'docs/release.md', 'CONTRIBUTING.md', 'scripts/Test-LocalGame.ps1', 'scripts/Import-LocalGame.ps1', 'scripts/Measure-FrameTimes.ps1', 'scripts/Capture-VulkanSession.ps1', 'docs/fsr-profiling.md', 'docs/amd-compatibility.md', 'upstream/mako/LICENSE'
     )
     foreach ($relative in $files) {
         $source = Join-Path $repo $relative
@@ -39,14 +41,15 @@ try {
         Copy-Item -LiteralPath $source -Destination $destination
     }
     Set-Content -LiteralPath (Join-Path $payload 'VERSION.txt') -Value $Version -Encoding ASCII
-    $archive = Join-Path $stage "$base-tools.zip"
+    $archive = Join-Path $stage "$base.zip"
     Compress-Archive -Path (Join-Path $payload '*') -DestinationPath $archive
     $artifacts = @($archive)
     if ($InnoCompiler) {
         $compiler = (Resolve-Path -LiteralPath $InnoCompiler).Path
-        & $compiler "/DPackageVersion=$($Version.Substring(1))" "/DPayload=$payload" "/O$stage" "/F$base-tools-setup" (Join-Path $repo 'installer/Tools.iss')
+        $definition = if ($GameImport) { 'installer/GameImport.iss' } else { 'installer/Tools.iss' }
+        & $compiler "/DPackageVersion=$($Version.Substring(1))" "/DPayload=$payload" "/O$stage" "/F$base-setup" (Join-Path $repo $definition)
         if ($LASTEXITCODE -ne 0) { throw "ISCC failed with exit code $LASTEXITCODE." }
-        $artifacts += Join-Path $stage "$base-tools-setup.exe"
+        $artifacts += Join-Path $stage "$base-setup.exe"
     }
     $entries = foreach ($artifact in $artifacts) {
         $hash = Get-FileHash -LiteralPath $artifact -Algorithm SHA256

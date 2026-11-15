@@ -1,14 +1,21 @@
 name: Windows tools release
 on:
+  workflow_dispatch:
+    inputs:
+      import_preview_version:
+        description: Game import preview (vMAJOR.MINOR.PATCH-rc.N)
+        required: true
+        default: v0.2.0-rc.1
   pull_request:
   push:
-    tags: ['v*']
+    tags: ['v*', '!v*-rc.*']
 
 permissions:
   contents: read
 
 jobs:
   package:
+    if: github.event_name != 'workflow_dispatch'
     runs-on: windows-2022
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -63,3 +70,29 @@ jobs:
         run: |
           $assets = @(Get-ChildItem dist -File | ForEach-Object FullName)
           gh release create $env:GITHUB_REF_NAME @assets --repo $env:GITHUB_REPOSITORY --verify-tag --draft --generate-notes
+
+  game-import-preview:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          submodules: true
+          persist-credentials: false
+      - name: Install Inno Setup
+        shell: pwsh
+        run: choco install innosetup --yes --no-progress
+      - name: Package game import preview
+        shell: pwsh
+        env:
+          PREVIEW_VERSION: ${{ inputs.import_preview_version }}
+        run: |
+          if ($env:PREVIEW_VERSION -notmatch '\Av\d+\.\d+\.\d+-rc\.[1-9]\d*\z') { throw 'Use a release candidate version.' }
+          $compiler = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6/ISCC.exe'
+          ./scripts/New-ReleasePackage.ps1 -Version $env:PREVIEW_VERSION -OutputDirectory preview -InnoCompiler $compiler -GameImport
+          ./scripts/Test-ReleasePackage.ps1 -PackageDirectory preview
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: windows-game-import-preview
+          path: preview/
+          if-no-files-found: error
