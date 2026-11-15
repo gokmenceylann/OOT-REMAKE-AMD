@@ -1,0 +1,202 @@
+--- a/gpu/vk/vk_draw.cpp
++++ b/gpu/vk/vk_draw.cpp
+@@ -2463,8 +2463,7 @@
+     // can be queued for it. A cache miss does not compile on this thread.
+     static const bool probe_strict_amd = [] {
+         const char* strict = getenv("RX_VK_PIPE_SKIP");
+-        const char* probe = getenv("RX_VK_PIPE_PROBE");
+-        return strict && atoi(strict) == 0 && (!probe || !env_value_off(probe)) &&
++        return strict && atoi(strict) == 0 && env_on("RX_VK_PIPE_PROBE") &&
+                dev.props.vendorID == 0x1002 && dev.vk13.pipelineCreationCacheControl;
+     }();
+     if (probe_strict_amd && pcache && !p.fallback) {
+@@ -9332,11 +9331,11 @@
+     predicted_check();
+ }
+ 
+-void precompile_run(void (*progress)(size_t done, size_t total)) {
++void precompile_run(void (*progress)(size_t done, size_t total), size_t recent_limit) {
+     // (hookshot, RX_VK_LOAD=create: only once every note has been built into the pipeline cache, so that a load from the
+     // caches alone never meets a pipeline the prepare should have compiled. The first start after a preparation builds them
+     // there and lets each go, precompile_warm: before the game, and never more of them alive than workers)
+-    if (programs_load_at_create()) {
++    if (!recent_limit && programs_load_at_create()) {
+         // (the pipeline cache's files dropped at this start, pcache_drop_stale: what the marker says is in them is gone)
+         if (pcache_drop_stale()) remove(precompile_built_path().c_str());
+         if (!precompile_covers_notes()) precompile_warm(progress);
+@@ -9350,15 +9349,16 @@
+     // 542 of 543 and the game close. The file says this step began and did not end: the next start lets the notes go and plays)
+     // (two starts in a row, not one: closing the window while it ran counted as a crash, and the next start then skipped the
+     // precompile and compiled everything in play: "stuck at 99%, then fine on the second start", 2026-11-08)
+-    const std::string running = pipe_notes_path() + ".running";
++    const std::string running = pipe_notes_path() + (recent_limit ? ".recent-running" : ".running");
+     int ended_inside = 0;
+     if (FILE* f = fopen(running.c_str(), "rb")) {
+         if (fscanf(f, "%d", &ended_inside) != 1) ended_inside = 1;
+         fclose(f);
+         if (ended_inside >= 2) {
+             remove(running.c_str());
+-            remove(pipe_notes_path().c_str());
+-            logf("vk: the last two starts did not get through the precompile: its notes are dropped");
++            if (!recent_limit) remove(pipe_notes_path().c_str());
++            logf("vk: the last two starts did not get through the precompile: %s",
++                 recent_limit ? "recent warmup skipped" : "its notes are dropped");
+             return;
+         }
+         logf("vk: the last start did not get through the precompile (closed, or it crashed there): trying it once more");
+@@ -9385,11 +9385,19 @@
+         std::lock_guard lk(state_mu);
+         if (!state_file) state_open_locked();
+     }
++    if (recent_limit) {
++        const size_t available = notes.size();
++        if (available > recent_limit) notes.erase(notes.begin(), notes.end() - recent_limit);
++        std::reverse(notes.begin(), notes.end());
++        logf("vk: recent pipeline warmup: %zu of %zu learned pipelines, newest first (no broad shader prepare)",
++             notes.size(), available);
++        if (notes.empty()) return;
++    }
+     std::unordered_set<uint64_t> wanted;
+     for (const auto& n : notes) wanted.insert(n->prog);
+     // (the compute programs: those this install's play dispatched (hookshot_computes.bin) and those the shipped state list names,
+     // each once; every kept one on a first start, with nothing dispatched yet: computes_plan)
+-    const ComputePlan plan = computes_plan(getenv("RX_VK_PRECOMPILE_COMPUTES"), !env_on("RX_VK_NO_STATE_LIST"));
++    const ComputePlan plan = computes_plan(recent_limit ? "none" : getenv("RX_VK_PRECOMPILE_COMPUTES"), !env_on("RX_VK_NO_STATE_LIST"));
+     if (!plan.all && !plan.none) wanted.insert(plan.keys.begin(), plan.keys.end());
+     std::vector<Program*> computes, fallbacks;
+     std::unordered_set<uint64_t> listed_here;   // (the listed keys this install has a program of)
+@@ -9398,7 +9406,7 @@
+         if (p.compute) {
+             computes.push_back(&p);
+             if (plan.keys.count(p.key)) listed_here.insert(p.key);
+-        } else if (p.fallback) fallbacks.push_back(&p);   // (hookshot: the mesh fallback's compute pipelines too, before play)
++        } else if (p.fallback && !recent_limit) fallbacks.push_back(&p);   // (hookshot: the mesh fallback's compute pipelines too, before play)
+     }, plan.all, true);
+     // (a listed key with no program here: another game version's, or a program this install did not keep. Nothing is made of it)
+     logf("vk: precompile: compute programs: %s (%zu keys listed: %zu in the shipped list, %zu dispatched in play here, %zu of the "
+@@ -9421,19 +9429,20 @@
+         std::mutex mu, first_graphics;
+         std::atomic<bool> graphics_begun{false};
+         bool abandoned = false;
++        std::atomic<bool> stop_recent{false};
+     };
+     const size_t graphics_n = notes.size(), computes_n = computes.size(), fallbacks_n = fallbacks.size();
+     Pre* pre = new Pre;
+     pre->notes = std::move(notes), pre->computes = std::move(computes), pre->fallbacks = std::move(fallbacks);
+     auto& next = pre->next;
+     auto& done = pre->done;
+-    const auto worker = [pre, total] {
++    const auto worker = [pre, total, recent_limit] {
+         ub_thread_off();   // (a background thread: see ub_thread_off)
+         auto& notes = pre->notes;
+         auto& computes = pre->computes;
+         auto& fallbacks = pre->fallbacks;
+         for (;;) {
+-            if (prepare_stopped()) return;
++            if (prepare_stopped() || pre->stop_recent.load(std::memory_order_acquire)) return;
+             const size_t i = pre->next++;
+             if (i >= total) return;
+             if (i < computes.size()) {
+@@ -9472,9 +9481,17 @@
+                     const VkPipeline made = build_graphics(*p, n.s, note_targets(n), (VkPrimitiveTopology)n.topo);
+                     pre->graphics_begun = true;
+                     if (first.owns_lock()) first.unlock();
++                    std::unique_lock guard(pre->mu, std::defer_lock);
++                    if (recent_limit) {
++                        guard.lock();
++                        if (pre->abandoned) {
++                            if (made) vkDestroyPipeline(dev.device, made, nullptr);
++                            return;
++                        }
++                    }
+                     std::lock_guard lk(note_mu);
+                     auto it = pipelines.find(n.key);
+-                    if (it == pipelines.end()) {
++                    if (it == pipelines.end() && (made || !recent_limit)) {
+                         auto e = std::make_unique<PipeEntry>();
+                         e->pipeline = made;
+                         e->ready.store(true, std::memory_order_release);
+@@ -9487,7 +9504,8 @@
+     };
+     std::vector<std::thread> threads;
+     const unsigned cpus = usable_cpus();
+-    for (unsigned i = 0; i < std::min(cpus, 64u); i++) threads.emplace_back(worker);
++    const unsigned worker_limit = recent_limit ? 2u : 64u;
++    for (unsigned i = 0; i < std::min(cpus, worker_limit); i++) threads.emplace_back(worker);
+     static const int stall_s = getenv("RX_VK_PRECOMPILE_STALL_S") ? atoi(getenv("RX_VK_PRECOMPILE_STALL_S")) : 30;
+     size_t last_done = 0;
+     auto last_change = std::chrono::steady_clock::now();
+@@ -9501,9 +9519,10 @@
+         if (next.load() >= total + threads.size()) break;
+         const auto now = std::chrono::steady_clock::now();
+         if (done.load() != last_done) last_done = done.load(), last_change = now;
+-        else if (stall_s > 0 && next.load() >= total && now - last_change > std::chrono::seconds(stall_s)) {
++        else if (stall_s > 0 && (recent_limit || next.load() >= total) && now - last_change > std::chrono::seconds(stall_s)) {
+             std::lock_guard lk(pre->mu);
+             pre->abandoned = true;
++            pre->stop_recent.store(recent_limit != 0, std::memory_order_release);
+             gone_on = true;
+             prepare_left_workers_note();
+             logf("vk: precompile: %zu of %zu done, nothing finished for %d s: the game starts, the rest go on behind it", done.load(),
+@@ -9537,8 +9556,8 @@
+     logf("vk: precompile: compute pipelines: %zu kept ready (%zu from the pipeline caches, %zu compiled now), %zu not made",
+          cs_cached + cs_compiled, cs_cached, cs_compiled, cs_failed);
+     // (every note built, by a run that got to its end: RX_VK_LOAD=create may load them from the caches from the next start on)
+-    if (!gone_on && !prepare_stopped()) precompile_built_write(graphics_n);
+-    predicted_check();
++    if (!recent_limit && !gone_on && !prepare_stopped()) precompile_built_write(graphics_n);
++    if (!recent_limit) predicted_check();
+ }
+ 
+ // (hookshot) The pipelines the notes predict for the programs no note names (vk_predict.cpp), after a prepare that prepared: each built
+--- a/gpu/vk/vk_internal.h
++++ b/gpu/vk/vk_internal.h
+@@ -419,7 +419,7 @@
+ bool invalidate_lost_surface(VkResult result);   // (dev.present_mu held)
+ bool replay_start();                          // vk_replay.cpp
+ bool precompile_wanted();                     // vk_draw.cpp
+-void precompile_run(void (*progress)(size_t done, size_t total));
++void precompile_run(void (*progress)(size_t done, size_t total), size_t recent_limit = 0);
+ bool prepare_run(void (*progress)(size_t done, size_t total), bool background, bool refresh_states = false);
+ bool prepare_is_update();
+ void prepare_background();
+--- a/gpu/vk/vk_main.cpp
++++ b/gpu/vk/vk_main.cpp
+@@ -1390,10 +1390,18 @@
+     if (width > 0 && height > 0) *w = (uint32_t)width, *h = (uint32_t)height;
+ #endif
+ }
+-void prepare_with_screen() {
++void prepare_with_screen(size_t recent_limit = 0) {
+     prep_ended = CreateEventA(nullptr, TRUE, FALSE, nullptr);
+     prep_running.store(true);
+-    std::thread worker([] {
++    std::thread worker([recent_limit] {
++        if (recent_limit) {
++            prep_skip[0].store(true), prep_skip[1].store(true);
++            prep_stage.store(2);
++            precompile_run(prep_progress, recent_limit);
++            prep_finished.store(true, std::memory_order_release);
++            SetEvent(prep_ended);
++            return;
++        }
+         const bool update = prepare_is_update();   // (an update, RX_VK_PREPARE_BACKGROUND=1: what the notes name now, the rest in play)
+         {
+             size_t guess[3];
+@@ -1569,6 +1577,16 @@
+         }
+         return true;
+     }
++    // The local notes already describe real game pipelines. Warm only those before first use.
++    if (const char* setting = getenv("RX_VK_PRECOMPILE_RECENT")) {
++        char* end = nullptr;
++        const long limit = std::strtol(setting, &end, 10);
++        if (end != setting && !*end && limit > 0 && limit <= 128) {
++            if (!dev.offscreen && screen_wanted()) prepare_with_screen((size_t)limit);
++            else precompile_run(nullptr, (size_t)limit);
++            return true;
++        }
++    }
+     if (FILE* f = fopen(skipped_path().c_str(), "rb")) {
+         fclose(f);
+         logf("vk: the shaders' preparation was skipped at the build: left to when each is first drawn");
