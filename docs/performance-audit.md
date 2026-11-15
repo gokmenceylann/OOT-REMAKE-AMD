@@ -93,3 +93,18 @@ yedekten runtime ikililerini yükler. Save, cache ve ayarları geri yazmaz.
 .\scripts\Switch-InstalledBuild.ps1 -GameDirectory 'D:\OOT-REMAKE-AMD-local\game' `
     -BackupDirectory 'D:\codex\OOT-REMAKE-AMD\Backups\OOT-REMAKE-AMD-2026-11-15_132736862' -Restore
 ~~~
+
+## Frame Generation Auto sunum beklemesi
+
+Donma kaydında çalışan yol Mako'nun dahili Auto interpolasyonuydu. FSR
+4.1.2 Native AA ayrı bir aşamada çalışıyordu. Windows'ta toplu sunum, önceki
+swapchain görüntülerini elinde tutarken yeni görüntüyü süresiz bekleyebiliyordu.
+`fg-present-recovery.patch` toplu görüntü alımını 20 ms ile sınırlar. Yeni
+görüntü alınamazsa kalan alımları bırakır ve önceden alınmış görüntüleri
+normal sırayla sunar. `deferred batch acquired` satırı bu durum oluştuğunda
+loglanır. Shader damgası ve FSR sağlayıcı seçimi aynı kalır.
+
+Bu değişiklik, sunum alımı sırasında belirlenen bloklama yolunu düzeltir.
+Castle Town videosundaki donmanın aynı yoldan kaynaklandığı henüz
+doğrulanmadı. Aynı rotada Auto ile yeniden test edin ve önceki koşuyla
+karşılaştırın.

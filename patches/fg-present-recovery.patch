@@ -1,0 +1,53 @@
+diff --git a/gpu/vk/vk_framegen.cpp b/gpu/vk/vk_framegen.cpp
+index 8400bae3..793b305f 100644
+--- a/gpu/vk/vk_framegen.cpp
++++ b/gpu/vk/vk_framegen.cpp
+@@ -482,6 +482,14 @@ void display_main() {
+                 present_defer_into = &pending[k];
+                 present_image(j.set->frame[k].image, fg.w, fg.h, nullptr, j.set->frame[k].view);
+                 present_defer_into = nullptr;
++                if (!pending[k].used) {
++                    // Stop acquiring until the images already queued in this set are presented.
++                    static unsigned interrupted_batches = 0;
++                    if (++interrupted_batches == 1 || interrupted_batches % 120 == 0)
++                        logf("vk: frame interpolation: deferred batch acquired %d of %d images; presenting the queued images (%u interrupted batches)",
++                             k, shown, interrupted_batches);
++                    break;
++                }
+             }
+             if (pending[0].used) vkWaitForFences(dev.device, 1, &pending[0].done, VK_TRUE, 100000000ull);   // (100 ms at most)
+         }
+diff --git a/gpu/vk/vk_replay.cpp b/gpu/vk/vk_replay.cpp
+index b86863b2..f63f1d42 100644
+--- a/gpu/vk/vk_replay.cpp
++++ b/gpu/vk/vk_replay.cpp
+@@ -4589,7 +4589,9 @@ void present_image(VkImage src, uint32_t sw, uint32_t sh, const int crop[4], VkI
+     const int64_t acquire_t0 = fence_t0 ? fps_clock() : 0;   // (then the swapchain's image: the display's pace)
+     if (fence_t0) fps_wait(fps_stats::kGpuWait, acquire_t0 - fence_t0);
+ #ifdef _WIN32
+-    const uint64_t acquire_timeout = UINT64_MAX;
++    // A deferred batch still owns its earlier images. Give display_main a chance to present them
++    // if the surface does not return another image, rather than blocking inside the batch.
++    const uint64_t acquire_timeout = present_defer_into ? 20000000ull : UINT64_MAX;
+ #else
+     // (linux: a Wayland compositor gives no image back while the window cannot be seen: its screen asleep, another workspace. A wait
+     // without end there held the presentation thread, and with it the game, until the screen came back. 100 ms, then the window is
+diff --git a/tests/test_present_ahead.py b/tests/test_present_ahead.py
+index ea7c7ec0..f54ccf0b 100644
+--- a/tests/test_present_ahead.py
++++ b/tests/test_present_ahead.py
+@@ -48,6 +48,14 @@ def main():
+     image = block(replay, "void present_image(VkImage src")
+     submit, defer, present = image.find("vkQueueSubmit2("), image.find("if (present_defer_into)"), image.find("present_out(index, qk)")
+     require(0 <= submit < defer < present, "present_image must submit the copy, then stop when deferred, before it presents")
++    require("present_defer_into ? 20000000ull : UINT64_MAX" in image,
++            "Windows deferred acquisition must be bounded while direct presents retain their timeout")
++    batch_start = display.index("present_defer_into = &pending[k]")
++    batch_end = display.index("if (pending[0].used)", batch_start)
++    batch = display[batch_start:batch_end]
++    require(0 <= batch.find("present_defer_into = nullptr") < batch.find("if (!pending[k].used)") < batch.find("break;"),
++            "an unavailable image must end the batch after clearing the deferred pointer")
++
+     commit = block(replay, "bool present_commit(")
+     require(0 <= commit.find("p.swapchain != dev.swapchain") < commit.find("present_out("),
+             "present_commit must skip an image of a swapchain made again since its copy")
