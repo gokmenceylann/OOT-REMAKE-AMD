@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.1.5
+
+- Updated the pinned Mako source to 4.1.1 and rebased the Vulkan patches.
+- The capture tool recognizes Mako 4.1.1's native log location.
+
 ## v0.1.4
 
 - Added Vulkan session status, timestamped stderr, stale log rejection and scene-window summaries.

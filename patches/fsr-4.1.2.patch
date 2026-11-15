@@ -1,5 +1,5 @@
 diff --git a/gpu/vk/dlss_math.h b/gpu/vk/dlss_math.h
-index 318430e..d77f329 100644
+index 318430ee..d77f329a 100644
 --- a/gpu/vk/dlss_math.h
 +++ b/gpu/vk/dlss_math.h
 @@ -5,6 +5,7 @@
@@ -38,33 +38,9 @@ index 318430e..d77f329 100644
  /// A view-projection's jitter taken off (row major): a jitter moves clip x and y by jitter * w, so jitter times the w row
  /// comes off the first two rows
  inline void unjitter(float m[16], const float jitter[2]) {
-diff --git a/gpu/vk/gpu_profile.h b/gpu/vk/gpu_profile.h
-new file mode 100644
-index 0000000..60c699d
---- /dev/null
-+++ b/gpu/vk/gpu_profile.h
-@@ -0,0 +1,18 @@
-+#pragma once
-+#include <cstdint>
-+
-+namespace mkwvk {
-+
-+// Discrete capacity comes from device-local heaps. UMA capacity is shared RAM.
-+constexpr int recommended_preset(bool discrete, uint64_t capacity, uint64_t budget) {
-+    constexpr uint64_t MiB = 1024 * 1024;
-+    if (!discrete || !capacity) return 1;
-+    const uint64_t usable = budget && budget < capacity ? budget : capacity;
-+    if (usable < 5 * 1024 * MiB) return 1;
-+    if (usable < 7 * 1024 * MiB) return 2;
-+    if (usable < 10 * 1024 * MiB) return 3;
-+    if (usable < 14 * 1024 * MiB) return 4;
-+    return 5;
-+}
-+
-+}
 diff --git a/gpu/vk/pipeline_cache_budget.h b/gpu/vk/pipeline_cache_budget.h
 new file mode 100644
-index 0000000..b293ac1
+index 00000000..b293ac14
 --- /dev/null
 +++ b/gpu/vk/pipeline_cache_budget.h
 @@ -0,0 +1,12 @@
@@ -81,116 +57,54 @@ index 0000000..b293ac1
 +
 +}
 diff --git a/gpu/vk/vk_draw.cpp b/gpu/vk/vk_draw.cpp
-index dd8c0a7..07d7b6d 100644
+index d9d18197..596b80e8 100644
 --- a/gpu/vk/vk_draw.cpp
 +++ b/gpu/vk/vk_draw.cpp
-@@ -41,6 +41,7 @@
- #include "shader_recompiler/backend/spirv/emit_spirv.h"
+@@ -43,6 +43,7 @@
  
  #include "vk_paths.h"
+ #include "pipeline_cache_file.h"
 +#include "pipeline_cache_budget.h"
  #include "vk_draw.h"
  #include "vk_menu.h"          // (opts.anisotropy: the Anisotropic filtering row; resolution_scale)
  #include "upscaler_rows.h"    // (upscale_lod_bias: which upscalers draw the 3D smaller)
-@@ -725,30 +726,54 @@ std::atomic<int64_t> pcache_built_since_save{0};
- // most precompiled pipelines as not found in the app's cache (~460 of ~12,900 here), which it then serves from its own.
- std::atomic<size_t> pcache_saved_size{0};
- /// A pipeline cache file's data, or nothing when it cannot be read or was made by another device or driver
--std::vector<uint8_t> pcache_file_read(const std::string& path) {
-+std::vector<uint8_t> pcache_file_read(const std::string& path, bool* commit_skip = nullptr) {
-     std::vector<uint8_t> data;
-     if (FILE* f = fopen(path.c_str(), "rb")) {
-         _fseeki64(f, 0, SEEK_END);
-         const int64_t sz = _ftelli64(f);
-         _fseeki64(f, 0, SEEK_SET);
--        if (sz > 32) {
--            data.resize((size_t)sz);
--            if (fread(data.data(), 1, data.size(), f) != data.size()) data.clear();
-+#ifdef _WIN32
-+        if (commit_skip && sz > 32) {
-+            MEMORYSTATUSEX status{};
-+            status.dwLength = sizeof status;
-+            const bool measured = GlobalMemoryStatusEx(&status) && status.ullTotalPageFile && status.ullAvailPageFile <= status.ullTotalPageFile;
-+            if (!measured || !pipeline_cache_fits_commit((uint64_t)sz, status.ullAvailPageFile)) {
-+                *commit_skip = true;
-+                logf("vk: pipeline cache retained on disk: %llu bytes, available commit %llu bytes (measurement valid=%d)",
-+                     (unsigned long long)sz, (unsigned long long)status.ullAvailPageFile, (int)measured);
-+                fclose(f);
-+                return {};
-+            }
-+        }
-+#else
-+        (void)commit_skip;
-+#endif
-+        uint8_t header[32]{};
-+        uint32_t fields[4]{};
-+        const bool read_header = sz > 32 && fread(header, 1, sizeof header, f) == sizeof header;
-+        if (read_header) std::memcpy(fields, header, sizeof fields);
-+        const bool valid = read_header && fields[0] >= sizeof header && fields[0] <= (uint64_t)sz &&
-+                           fields[1] == VK_PIPELINE_CACHE_HEADER_VERSION_ONE && fields[2] == dev.props.vendorID &&
-+                           fields[3] == dev.props.deviceID && !std::memcmp(header + 16, dev.props.pipelineCacheUUID, VK_UUID_SIZE);
-+        if (!valid && commit_skip && sz > 0) *commit_skip = true;
-+        if (valid && _fseeki64(f, 0, SEEK_SET) == 0) {
-+            try {
-+                data.resize((size_t)sz);
-+            } catch (const std::bad_alloc&) {
-+                if (commit_skip) *commit_skip = true;
-+                fclose(f);
-+                logf("vk: pipeline cache retained on disk: host allocation failed for %llu bytes", (unsigned long long)sz);
-+                return {};
-+            }
-+            if (fread(data.data(), 1, data.size(), f) != data.size()) {
-+                if (commit_skip) *commit_skip = true;
-+                std::vector<uint8_t>().swap(data);
-+            }
-+        } else if (valid && commit_skip) {
-+            *commit_skip = true;
+@@ -881,7 +882,6 @@ size_t play_files_merge() {
+             continue;
          }
-         fclose(f);
-     }
--    // (data of another device or driver is dropped before Vulkan sees it)
--    if (data.size() >= 32) {
--        uint32_t head_size, version, vendor, device;
--        std::memcpy(&head_size, data.data(), 4);
--        std::memcpy(&version, data.data() + 4, 4);
--        std::memcpy(&vendor, data.data() + 8, 4);
--        std::memcpy(&device, data.data() + 12, 4);
--        if (head_size < 32 || head_size > data.size() || version != VK_PIPELINE_CACHE_HEADER_VERSION_ONE ||   // (hookshot)
--            vendor != dev.props.vendorID || device != dev.props.deviceID ||
--            std::memcmp(data.data() + 16, dev.props.pipelineCacheUUID, VK_UUID_SIZE))
--            data.clear();
--    }
-     return data;
- }
- std::string pcache_dir;
-@@ -808,7 +833,6 @@ size_t play_files_merge() {
-         VkPipelineCacheCreateInfo ci{VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO};
-         ci.initialDataSize = part.size(), ci.pInitialData = part.data();
-         if (part.empty() || vkCreatePipelineCache(dev.device, &ci, nullptr, &tmp) != VK_SUCCESS) {
--            remove(path.c_str());
+         if (vkCreatePipelineCache(dev.device, &ci, nullptr, &tmp) != VK_SUCCESS) {
+-            if (part.reset()) remove(path.c_str()); // Release a mapped Windows view before removing rejected bytes.
              continue;
          }
          if (vkMergePipelineCaches(dev.device, pcache, 1, &tmp) == VK_SUCCESS) merged.push_back(path), merged_kb += part.size() >> 10;
-@@ -914,7 +938,9 @@ VkResult create_cached(VkResult (*create)(VkPipelineCache, const CI*, VkPipeline
- 
- bool pcache_no_save = false;   // (RX_VK_PCACHE_LOAD=0: pcache_init)
+@@ -1054,7 +1054,9 @@ bool pcache_drop_stale() {
+     return dropped;
+ }
  void pcache_init() {
 -    if (pcache) return;
 +    static bool attempted = false;
 +    if (attempted) return;
 +    attempted = true;
-     char exe[MAX_PATH];
-     const DWORD n = game_module_path(exe, MAX_PATH);
-     std::string dir(exe, n);
-@@ -923,18 +949,30 @@ void pcache_init() {
-     // (RX_VK_PCACHE_LOAD=0, an A/B of what the file costs in memory: its 2.5 GB read whole and held by the driver. The cache
-     // starts empty and is not saved; the driver's own shader cache is all there is)
-     static const bool off = getenv("RX_VK_PCACHE_LOAD") && atoi(getenv("RX_VK_PCACHE_LOAD")) == 0;
--    pcache_no_save = off;
--    std::vector<uint8_t> data = off ? std::vector<uint8_t>{} : pcache_file_read(pcache_path);
-+    bool commit_skip = false;
-+    std::vector<uint8_t> data = off ? std::vector<uint8_t>{} : pcache_file_read(pcache_path, &commit_skip);
-+    pcache_no_save = off || commit_skip;
+     const std::string dir = pcache_dir = cache_path("");   // (the game folder's cache/, with its separator: vk_paths.h)
+     if (const size_t removed = PipelineCacheFile::cleanup_temporaries(dir))
+         logf("vk: pipeline cache: %zu old temporary files removed", removed);
+@@ -1063,16 +1065,41 @@ void pcache_init() {
+     pcache_no_save = off;
+     pcache_drop_stale();   // (before the files are read)
+     auto data = off ? PipelineCacheFile{} : pcache_file_read(pcache_path);
++#ifdef _WIN32
++    if (!data.empty()) {
++        MEMORYSTATUSEX status{};
++        status.dwLength = sizeof status;
++        const bool measured = GlobalMemoryStatusEx(&status) && status.ullTotalPageFile &&
++                              status.ullAvailPageFile <= status.ullTotalPageFile;
++        if (!measured || !pipeline_cache_fits_commit(data.size(), status.ullAvailPageFile)) {
++            logf("vk: pipeline cache retained on disk: %zu bytes, available commit %llu bytes (measurement valid=%d)",
++                 data.size(), (unsigned long long)status.ullAvailPageFile, (int)measured);
++            pcache_no_save = true;
++            data = {};
++        }
++    }
++#endif
      VkPipelineCacheCreateInfo ci{VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO};
      ci.initialDataSize = data.size();
      ci.pInitialData = data.empty() ? nullptr : data.data();
@@ -199,9 +113,9 @@ index dd8c0a7..07d7b6d 100644
 +    VkResult result = vkCreatePipelineCache(dev.device, &ci, nullptr, &cache);
 +    if (result != VK_SUCCESS && !data.empty()) {
 +        logf("vk: pipeline cache import failed: VkResult=%d; existing cache retained", (int)result);
-+        commit_skip = pcache_no_save = true;
++        pcache_no_save = true;
 +        cache = VK_NULL_HANDLE;
-+        std::vector<uint8_t>().swap(data);
++        data = {};
          ci.initialDataSize = 0, ci.pInitialData = nullptr;
 -        vkCreatePipelineCache(dev.device, &ci, nullptr, &pcache);
 +        result = vkCreatePipelineCache(dev.device, &ci, nullptr, &cache);
@@ -217,20 +131,20 @@ index dd8c0a7..07d7b6d 100644
 +    if (pcache && !pcache_no_save) play_files_merge();
      // (what it holds as read, the play files too: a save of data that size has nothing to add to the files)
      size_t held = 0;
-     if (pcache && vkGetPipelineCacheData(dev.device, pcache, &held, nullptr) == VK_SUCCESS) pcache_saved_size = held;
+     PcacheFetch fetch(-1);
 diff --git a/gpu/vk/vk_fsr3.cpp b/gpu/vk/vk_fsr3.cpp
-index 77e5a80..7cf783a 100644
+index 3b7796b9..182207a1 100644
 --- a/gpu/vk/vk_fsr3.cpp
 +++ b/gpu/vk/vk_fsr3.cpp
-@@ -21,6 +21,7 @@
- #include "vk_draw.h"      // (descriptors_disturbed)
+@@ -23,6 +23,7 @@
  #include "vk_gprof.h"     // (RX_VK_PASS_TIMING: a span per pass, so the report names them)
  #include "vk_menu.h"
+ #include "vk_reactive.h"
 +#include "vk_fsr4.h"
  #include "vk_temporal.h"   // (temporal_env_chosen: RX_VK_DLSS / RX_VK_FSR4 over the row's FSR 3.1)
  #include "vk_texture.h"
  #include "upscaler_rows.h"
-@@ -694,6 +695,7 @@ struct Out {
+@@ -724,6 +725,7 @@ struct Out {
      int reason_repeats = 0;
      bool told_first = false;
      uint64_t drawn = 0;
@@ -238,7 +152,7 @@ index 77e5a80..7cf783a 100644
  };
  Out& out_state() {
      static Out o;
-@@ -751,6 +753,14 @@ bool fsr3_wanted() {
+@@ -784,6 +786,14 @@ bool fsr3_chosen() {
      if (env == 0) return false;
      // (the Upscaler row's FSR 3.1, upscaler_rows.h, read each time: the row changes it while the game runs. RX_VK_DLSS=1 / 2
      // or RX_VK_FSR4=1 / 2 goes over the row, its FSR 3.1 too: vk_temporal.cpp's chain draws then)
@@ -253,17 +167,17 @@ index 77e5a80..7cf783a 100644
      return (env > 0 || (opts.dlss == upscaler_rows::FSR3 && !temporal_env_chosen())) && fsr3::supported();
  }
  
-@@ -783,7 +793,8 @@ bool fsr3_upscale(VkCommandBuffer cmd, uint64_t key, bool known, Texture* in, Vk
+@@ -904,7 +914,8 @@ bool fsr3_upscale(VkCommandBuffer cmd, uint64_t key, bool known, Texture* in, Vk
      ai.jitter_phases = fsr3_inputs::jitter_size(2) ? fsr3_inputs::jitter_size(2) : 8;
      ai.camera = f.camera;
      ai.frame_time_ms = f.frame_ms;
 -    ai.reset = f.reset;
 +    // Prepared camera history can advance even when an upscale does not reach the output.
 +    ai.reset = f.reset || !o.last_upscaled_frame || f.frame - o.last_upscaled_frame != 1;
+     // (what the scene's transparent draws changed, when RX_VK_REACTIVE asks for it and there were any: vk_reactive.h)
+     if (reactive::Mask m; reactive::mask(cmd, f.width, f.height, f.width, f.height, f.color, m)) ai.reactive = m.view;
      if (!fsr3::upscale(cmd, ai)) return fail("its passes could not be recorded");
-     {
-         const int32_t pc[2] = {(int32_t)ow, (int32_t)oh};
-@@ -800,6 +811,7 @@ bool fsr3_upscale(VkCommandBuffer cmd, uint64_t key, bool known, Texture* in, Vk
+@@ -923,6 +934,7 @@ bool fsr3_upscale(VkCommandBuffer cmd, uint64_t key, bool known, Texture* in, Vk
          vkCmdDispatch(cmd, (ow + 7) / 8, (oh + 7) / 8, 1);
      }
      full_barrier(cmd);
@@ -272,26 +186,26 @@ index 77e5a80..7cf783a 100644
      // (every 600 frames: that it still draws, and the jitter it was given, which says the host's jitter is on)
      if (++o.drawn % 600 == 0)
 diff --git a/gpu/vk/vk_fsr4.cpp b/gpu/vk/vk_fsr4.cpp
-index 2a34a9c..df7035c 100644
+index bbf611f1..db1fc0b3 100644
 --- a/gpu/vk/vk_fsr4.cpp
 +++ b/gpu/vk/vk_fsr4.cpp
-@@ -25,6 +25,7 @@
- #include <memory>
- #include <mutex>
- #include <string>
+@@ -29,6 +29,7 @@
+ #include <thread>
+ #include <unordered_map>
+ #include <unordered_set>
 +#include <type_traits>
  #include <vector>
  #ifndef _WIN32
  #include <dlfcn.h>
-@@ -33,6 +34,7 @@
- 
+@@ -40,6 +41,7 @@
+ #include "vk_gprof.h"
  #include "vk_paths.h"
  #include "vk_texture.h"
 +#include "vk_gprof.h"
  
  #include "api/include/ffx_api.h"
  #include "api/include/ffx_api_types.h"
-@@ -55,6 +57,8 @@ int env_switch(const char* name) {   // (-1: unset)
+@@ -66,6 +68,8 @@ int env_switch(const char* name) {   // (-1: unset)
  std::atomic<int> g_why{-1};
  }  // namespace
  
@@ -300,7 +214,7 @@ index 2a34a9c..df7035c 100644
  FsrWhy fsr4_why() {
      if (!fsr4_built()) return FSR_NOT_BUILT;
      static const bool env_off = env_switch("RX_VK_FSR4") == 0;
-@@ -99,6 +103,9 @@ Library& lib() {
+@@ -110,6 +114,9 @@ Library& lib() {
  struct Context {
      ffxCreateBackendVKDesc backend{};
      ffxOverrideVersion version{};
@@ -310,10 +224,10 @@ index 2a34a9c..df7035c 100644
  #ifndef _WIN32
      ffxCreateBackendVKDesc_DEPRECATED legacy_backend{};   // (linux) the backend description a Vulkan FSR 4 build like fsr4-vk reads
  #endif
-@@ -106,14 +113,22 @@ struct Context {
-     ffxContext context = nullptr;
-     uint32_t width = 0, height = 0;   // (its output, which is also the most the render size can be)
-     uint64_t memory = 0;              // (what AMD's library says it holds)
+@@ -121,14 +128,22 @@ struct Context {
+     // the colour clamped to 1, cut every highlight at the paper white. Then it takes linear light, HDR, with AMD's own
+     // exposure, and the chain does not clamp it: hdr())
+     bool hdr = false;
 +    uint64_t made_frame = 0;
      ~Context() {
 -        if (context) lib().destroy(&context, nullptr);
@@ -334,10 +248,10 @@ index 2a34a9c..df7035c 100644
      uint32_t in_w = 0, in_h = 0;   // (the inputs' size under this context: the largest render size it has had)
      std::chrono::steady_clock::time_point last{};
      uint64_t evals = 0;
-@@ -203,6 +218,10 @@ bool load() {
-         return no(FSR_NO_LIBRARY);
+@@ -954,6 +969,10 @@ bool load() {
+         tune::prepare_device();
+         l.device_context.vkDeviceProcAddr = &tune::device_proc;
      }
-     l.device_context = VkDeviceContext{dev.device, dev.physical, vkGetDeviceProcAddr};
 +    logf("vk: FSR SDK probe: %s vendor=%04x device=%04x driver=%#x Vulkan %u.%u.%u INT8=%u dot=%u",
 +         dev.props.deviceName, dev.props.vendorID, dev.props.deviceID, dev.props.driverVersion,
 +         VK_API_VERSION_MAJOR(dev.props.apiVersion), VK_API_VERSION_MINOR(dev.props.apiVersion),
@@ -345,7 +259,7 @@ index 2a34a9c..df7035c 100644
      // (the library lists every upscaler this device can run: the newest 4.x is taken explicitly, so an FSR 3.1 provider never
      // stands in silently)
      ffxQueryDescGetVersions versions{};
-@@ -229,7 +248,11 @@ bool load() {
+@@ -980,7 +999,11 @@ bool load() {
          const char* name = names[i] ? names[i] : "";
          listed += (listed.empty() ? "" : ", ") + std::string(name);
          unsigned v[3] = {0, 0, 0};
@@ -358,7 +272,7 @@ index 2a34a9c..df7035c 100644
          // (the first of equal versions: a Vulkan FSR 4 build lists its Auto, which picks the GPU's model, before INT8 and FP8)
          if (v[0] == 4 && (!l.version_id || v[1] > best[1] || (v[1] == best[1] && v[2] > best[2]))) {
              std::memcpy(best, v, sizeof best);
-@@ -246,13 +269,132 @@ bool load() {
+@@ -997,13 +1020,141 @@ bool load() {
      return true;
  }
  
@@ -375,11 +289,15 @@ index 2a34a9c..df7035c 100644
 +};
 +thread_local CreateTrace* active_create_trace = nullptr;
 +
-+template<auto function> struct ObservedVulkanCall;
-+template<class... Args, VkResult (VKAPI_PTR **function)(Args...)>
-+struct ObservedVulkanCall<function> {
++template<auto function, auto tuned = nullptr> struct ObservedVulkanCall;
++template<class... Args, VkResult (VKAPI_PTR **function)(Args...), auto tuned>
++struct ObservedVulkanCall<function, tuned> {
 +    static VKAPI_ATTR VkResult VKAPI_CALL invoke(Args... args) {
-+        const VkResult result = (*function)(args...);
++        auto call = *function;
++        if constexpr (tuned != nullptr) {
++            if (tune::on()) call = tuned;
++        }
++        const VkResult result = call(args...);
 +        if (auto* trace = active_create_trace) {
 +            ++trace->calls;
 +            record(*trace, result, args...);
@@ -452,19 +370,24 @@ index 2a34a9c..df7035c 100644
 +};
 +
 +VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL upscale_proc_addr(VkDevice device, const char* name) {
-+    const auto original = vkGetDeviceProcAddr(device, name);
-+    if (!original) return nullptr;
++    const auto original = lib().device_context.vkDeviceProcAddr(device, name);
++    if (!original || !active_create_trace) return original;
 +#define OBSERVE(fn) if (fn && std::strcmp(name, #fn) == 0) return reinterpret_cast<PFN_vkVoidFunction>(&ObservedVulkanCall<&fn>::invoke)
 +    OBSERVE(vkCreateImage);
 +    OBSERVE(vkCreateImageView);
-+    OBSERVE(vkCreateBuffer);
++    if (vkCreateBuffer && std::strcmp(name, "vkCreateBuffer") == 0)
++        return reinterpret_cast<PFN_vkVoidFunction>(&ObservedVulkanCall<&vkCreateBuffer, &tune::create_buffer>::invoke);
 +    OBSERVE(vkAllocateMemory);
 +    OBSERVE(vkCreateDescriptorPool);
-+    OBSERVE(vkCreateDescriptorSetLayout);
++    if (vkCreateDescriptorSetLayout && std::strcmp(name, "vkCreateDescriptorSetLayout") == 0)
++        return reinterpret_cast<PFN_vkVoidFunction>(&ObservedVulkanCall<&vkCreateDescriptorSetLayout, &tune::create_set_layout>::invoke);
 +    OBSERVE(vkAllocateDescriptorSets);
-+    OBSERVE(vkCreatePipelineLayout);
-+    OBSERVE(vkCreateShaderModule);
-+    OBSERVE(vkCreateComputePipelines);
++    if (vkCreatePipelineLayout && std::strcmp(name, "vkCreatePipelineLayout") == 0)
++        return reinterpret_cast<PFN_vkVoidFunction>(&ObservedVulkanCall<&vkCreatePipelineLayout, &tune::create_pipeline_layout>::invoke);
++    if (vkCreateShaderModule && std::strcmp(name, "vkCreateShaderModule") == 0)
++        return reinterpret_cast<PFN_vkVoidFunction>(&ObservedVulkanCall<&vkCreateShaderModule, &tune::create_shader_module>::invoke);
++    if (vkCreateComputePipelines && std::strcmp(name, "vkCreateComputePipelines") == 0)
++        return reinterpret_cast<PFN_vkVoidFunction>(&ObservedVulkanCall<&vkCreateComputePipelines, &tune::create_compute_pipelines>::invoke);
 +    OBSERVE(vkBindImageMemory);
 +    OBSERVE(vkBindBufferMemory);
 +#undef OBSERVE
@@ -482,8 +405,8 @@ index 2a34a9c..df7035c 100644
 +
  /// A context for outputs of w x h, any render size up to that (the game's dynamic resolution and the Render resolution row
  /// change it every so often: one context takes them all)
--std::shared_ptr<Context> make_context(uint32_t w, uint32_t h) {
-+std::shared_ptr<Context> make_context(uint32_t rw, uint32_t rh, uint32_t w, uint32_t h, ffxReturnCode_t& result) {
+-std::shared_ptr<Context> make_context(uint32_t w, uint32_t h, bool hdr) {
++std::shared_ptr<Context> make_context(uint32_t rw, uint32_t rh, uint32_t w, uint32_t h, bool hdr, ffxReturnCode_t& result) {
      Library& l = lib();
      auto c = std::make_shared<Context>();
      c->backend.header.type = FFX_API_CREATE_CONTEXT_DESC_TYPE_BACKEND_VK;
@@ -492,7 +415,7 @@ index 2a34a9c..df7035c 100644
      c->version.header.type = FFX_API_DESC_TYPE_OVERRIDE_VERSION;
      c->version.versionId = l.version_id;
      c->backend.header.pNext = &c->version.header;
-@@ -266,22 +408,40 @@ std::shared_ptr<Context> make_context(uint32_t w, uint32_t h) {
+@@ -1017,7 +1168,10 @@ std::shared_ptr<Context> make_context(uint32_t w, uint32_t h, bool hdr) {
      c->version.header.pNext = &c->legacy_backend.header;
  #endif
      c->upscale.header.type = FFX_API_CREATE_CONTEXT_DESC_TYPE_UPSCALE;
@@ -502,8 +425,9 @@ index 2a34a9c..df7035c 100644
 +    c->api.header.pNext = &c->backend.header;
 +    c->upscale.header.pNext = &c->api.header;
      // (the chain's colour is tonemapped and square-root encoded already: LDR, perceptual, no auto exposure; depth not
-     // inverted. The render size changes under the one context)
-     c->upscale.flags = FFX_UPSCALE_ENABLE_NON_LINEAR_COLORSPACE | FFX_UPSCALE_ENABLE_DYNAMIC_RESOLUTION;
+     // inverted. The render size changes under the one context. With the game's native HDR the chain gives linear light
+     // past 1 (TemporalEngine::hdr): an HDR context, linear, with AMD's auto exposure)
+@@ -1027,15 +1181,31 @@ std::shared_ptr<Context> make_context(uint32_t w, uint32_t h, bool hdr) {
      c->upscale.maxRenderSize = {w, h};
      c->upscale.maxUpscaleSize = {w, h};
      c->upscale.fpMessage = &on_message;
@@ -535,15 +459,15 @@ index 2a34a9c..df7035c 100644
 +        logf("vk: AMD FSR 4: its upscaler was not made (%d) for %ux%u", (int)result, w, h);
          return nullptr;
      }
--    c->width = w, c->height = h;
+-    c->width = w, c->height = h, c->hdr = hdr;
++    c->hdr = hdr;
      FfxApiEffectMemoryUsage usage{};
      ffxQueryDescUpscaleGetGPUMemoryUsage mem{};
      mem.header.type = FFX_API_QUERY_DESC_TYPE_UPSCALE_GPU_MEMORY_USAGE;
-@@ -290,7 +450,25 @@ std::shared_ptr<Context> make_context(uint32_t w, uint32_t h) {
+@@ -1044,6 +1214,24 @@ std::shared_ptr<Context> make_context(uint32_t w, uint32_t h, bool hdr) {
      ffxQueryGetProviderVersion provider{};
      provider.header.type = FFX_API_QUERY_DESC_TYPE_GET_PROVIDER_VERSION;
      const bool known = l.query(&c->context, &provider.header) == FFX_API_RETURN_OK && provider.versionName;
--    logf("vk: AMD FSR 4: FSR %s made for outputs of %ux%u (frame %llu, %.1f ms of CPU; its own %llu MB)",
 +#ifdef _WIN32
 +    if (!known || provider.versionId != l.version_id) {
 +        logf("vk: FSR candidate rejected: selected provider could not be confirmed");
@@ -562,11 +486,10 @@ index 2a34a9c..df7035c 100644
 +    }
 +#endif
 +    c->provider = known ? provider.versionName : "unknown";
-+    logf("vk: AMD FSR 4: candidate %s made for outputs of %ux%u (frame %llu, %.1f ms of CPU; its own %llu MB)",
+     logf("vk: AMD FSR 4: FSR %s made for outputs of %ux%u (frame %llu, %.1f ms of CPU; its own %llu MB)%s",
           known ? provider.versionName : "?", w, h, (unsigned long long)texture_frame_no(), made_ms,
-          (unsigned long long)(c->memory >> 20));
-     return c;
-@@ -318,8 +496,7 @@ void barriers(VkCommandBuffer cmd, const VkImageMemoryBarrier2* b, uint32_t n) {
+          (unsigned long long)(c->memory >> 20), hdr ? ", HDR colour, linear (the game's native HDR)" : "");
+@@ -1072,8 +1260,7 @@ void barriers(VkCommandBuffer cmd, const VkImageMemoryBarrier2* b, uint32_t n) {
      vkCmdPipelineBarrier2(cmd, &di);
  }
  
@@ -576,7 +499,7 @@ index 2a34a9c..df7035c 100644
  bool unit_exposure(VkCommandBuffer cmd, TemporalImage& out) {
      static VkImage image = VK_NULL_HANDLE;
      static VmaAllocation allocation{};
-@@ -345,7 +522,6 @@ bool unit_exposure(VkCommandBuffer cmd, TemporalImage& out) {
+@@ -1099,7 +1286,6 @@ bool unit_exposure(VkCommandBuffer cmd, TemporalImage& out) {
      }
      return true;
  }
@@ -584,7 +507,7 @@ index 2a34a9c..df7035c 100644
  
  // ---- the engine (vk_temporal.h TemporalEngine) ----
  
-@@ -354,18 +530,37 @@ bool start() { return load(); }
+@@ -1108,9 +1294,11 @@ bool start() { return load(); }
  void release() {
      State& s = st();
      if (!s.context) return;
@@ -598,20 +521,23 @@ index 2a34a9c..df7035c 100644
 +    temporal_after_gpu([old] {});
  }
  
- int prepare(VkCommandBuffer, uint32_t rw, uint32_t rh, uint32_t ow, uint32_t oh, uint32_t* in_w, uint32_t* in_h, const char** why) {
-     State& s = st();
-     int made = 1;
--    if (!s.context || s.context->width != ow || s.context->height != oh) {
+ int prepare(VkCommandBuffer, uint32_t rw, uint32_t rh, uint32_t ow, uint32_t oh, bool /*native_aa*/,
+@@ -1121,11 +1309,27 @@ int prepare(VkCommandBuffer, uint32_t rw, uint32_t rh, uint32_t ow, uint32_t oh,
+     // the game's picture not PQ, the scene is LDR. RX_VK_FSR4_HDR=0: the LDR context and the clamped colour with Native too)
+     static const bool hdr_allowed = env_switch("RX_VK_FSR4_HDR") != 0;
+     const bool hdr = hdr_allowed && present_native_pq.load(std::memory_order_relaxed);
+-    if (!s.context || s.context->width != ow || s.context->height != oh || s.context->hdr != hdr) {
+-        if (s.context && s.context->hdr != hdr) logf("vk: AMD FSR 4: made again: the game's native HDR turned %s", hdr ? "on" : "off");
 -        release();
--        s.context = make_context(ow, oh);
+-        s.context = make_context(ow, oh, hdr);
 -        if (!s.context) return *why = "its upscaler was not made", -1;
-+    if (s.context && (s.context->width != ow || s.context->height != oh)) release();
++    if (s.context && (s.context->width != ow || s.context->height != oh || s.context->hdr != hdr)) release();
 +    if (!s.context) {
 +        if (!s.retiring.expired()) return *why = "waiting for previous FSR context on GPU", 0;
 +        const uint64_t frame = texture_frame_no();
 +        if (frame < s.retry_at) return *why = "FSR context retry cooldown", 0;
 +        ffxReturnCode_t result = FFX_API_RETURN_OK;
-+        s.context = make_context(rw, rh, ow, oh, result);
++        s.context = make_context(rw, rh, ow, oh, hdr, result);
 +        if (!s.context) {
 +            if (result == FFX_API_RETURN_ERROR_RUNTIME_ERROR && !s.retried) {
 +                s.retried = true;
@@ -629,40 +555,41 @@ index 2a34a9c..df7035c 100644
          s.in_w = s.in_h = 0;
          made = 2;
      }
-@@ -379,10 +574,8 @@ int prepare(VkCommandBuffer, uint32_t rw, uint32_t rh, uint32_t ow, uint32_t oh,
+@@ -1139,10 +1343,8 @@ int prepare(VkCommandBuffer, uint32_t rw, uint32_t rh, uint32_t ow, uint32_t oh,
  bool evaluate(VkCommandBuffer cmd, const TemporalFrame& f) {
      State& s = st();
      Library& l = lib();
 -#ifndef _WIN32
      TemporalImage exposure{};
-     if (!unit_exposure(cmd, exposure)) return false;
+-    if (!unit_exposure(cmd, exposure)) return false;
 -#endif
++    if (!s.context->hdr && !unit_exposure(cmd, exposure)) return false;
      const auto now = std::chrono::steady_clock::now();
      const float frame_ms = s.evals ? std::chrono::duration<float, std::milli>(now - s.last).count() : 1000.0f / 30.0f;
      s.last = now;
-@@ -402,9 +595,7 @@ bool evaluate(VkCommandBuffer cmd, const TemporalFrame& f) {
+@@ -1162,10 +1364,8 @@ bool evaluate(VkCommandBuffer cmd, const TemporalFrame& f) {
      d.depth = resource(f.depth, VK_IMAGE_USAGE_SAMPLED_BIT, FFX_API_RESOURCE_STATE_COMPUTE_READ);
      d.motionVectors = resource(f.motion, VK_IMAGE_USAGE_SAMPLED_BIT, FFX_API_RESOURCE_STATE_COMPUTE_READ);
      d.output = resource(f.output, VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, FFX_API_RESOURCE_STATE_UNORDERED_ACCESS);
 -#ifndef _WIN32
--    d.exposure = resource(exposure, VK_IMAGE_USAGE_SAMPLED_BIT, FFX_API_RESOURCE_STATE_COMPUTE_READ);
+-    if (!s.context->hdr)   // (an HDR context works out its own exposure: FFX_UPSCALE_ENABLE_AUTO_EXPOSURE)
+-        d.exposure = resource(exposure, VK_IMAGE_USAGE_SAMPLED_BIT, FFX_API_RESOURCE_STATE_COMPUTE_READ);
 -#endif
-+    d.exposure = resource(exposure, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, FFX_API_RESOURCE_STATE_COMPUTE_READ);
++    if (!s.context->hdr)
++        d.exposure = resource(exposure, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, FFX_API_RESOURCE_STATE_COMPUTE_READ);
      d.jitterOffset = {f.jitter[0], f.jitter[1]};   // (render pixels, as the projection was offset: the same as DLSS's)
      d.motionVectorScale = {1.0f, 1.0f};             // (render pixels already, towards the frame before)
      d.renderSize = {f.render_w, f.render_h};
-@@ -417,8 +608,10 @@ bool evaluate(VkCommandBuffer cmd, const TemporalFrame& f) {
-     d.cameraNear = f.near_z, d.cameraFar = f.far_z, d.cameraFovAngleVertical = f.fov_y;
-     d.viewSpaceToMetersFactor = 1.0f;
-     d.flags = FFX_UPSCALE_FLAG_NON_LINEAR_COLOR_SRGB;
-+    const bool timed = gprof_begin(cmd);
-     ::mkwvk::rec::boundary(::mkwvk::rec::B_DIRECT);   // (ffxDispatch records into cmd itself: what this thread recorded through vk_work.h reaches cmd first)
-     const ffxReturnCode_t r = l.dispatch(&s.context->context, &d.header);
-+    if (timed) gprof_end(cmd, "FSR 4 SDK dispatch");
-     note_work();   // (AMD's dispatches: full_barrier must not take the next barrier for a repeat of the one before them)
- 
-     const VkImageMemoryBarrier2 out[4] = {barrier(f.color.image, VK_ACCESS_2_SHADER_READ_BIT, any, R, G),
-@@ -430,6 +623,12 @@ bool evaluate(VkCommandBuffer cmd, const TemporalFrame& f) {
+@@ -1180,7 +1380,7 @@ bool evaluate(VkCommandBuffer cmd, const TemporalFrame& f) {
+     d.flags = s.context->hdr ? 0u : (uint32_t)FFX_UPSCALE_FLAG_NON_LINEAR_COLOR_SRGB;   // (HDR: linear light)
+     ffxReturnCode_t r;
+     {
+-        GprofSpan timed(cmd, "fsr4 ffxDispatch (AMD's passes)");   // (RX_VK_PASS_TIMING=1: AMD's own GPU time, named)
++        GprofSpan timed(cmd, "FSR 4 SDK dispatch");   // (RX_VK_PASS_TIMING=1: AMD's own GPU time, named)
+         ::mkwvk::rec::boundary(::mkwvk::rec::B_DIRECT);   // (ffxDispatch records into cmd itself: what this thread recorded through vk_work.h reaches cmd first)
+         r = l.dispatch(&s.context->context, &d.header);
+         note_work();   // (AMD's dispatches: full_barrier must not take the next barrier for a repeat of the one before them)
+@@ -1195,6 +1395,12 @@ bool evaluate(VkCommandBuffer cmd, const TemporalFrame& f) {
          logf("vk: AMD FSR 4: its dispatch failed (%d)", (int)r);
          return false;
      }
@@ -676,10 +603,10 @@ index 2a34a9c..df7035c 100644
      if (s.evals++ == 0 || (f.reset && s.told_resets < 40))
          s.told_resets++, logf("vk: AMD FSR 4: %ux%u -> %ux%u, jitter %+.3f %+.3f px%s", f.render_w, f.render_h, f.output.width,
 diff --git a/gpu/vk/vk_fsr4.h b/gpu/vk/vk_fsr4.h
-index 6e10a95..26420fb 100644
+index 21d713c8..5d2f286c 100644
 --- a/gpu/vk/vk_fsr4.h
 +++ b/gpu/vk/vk_fsr4.h
-@@ -12,11 +12,12 @@ struct TemporalEngine;
+@@ -12,7 +12,7 @@ struct TemporalEngine;
  /// Whether this build has FSR in it (HOOKSHOT_FSR)
  bool fsr4_built();
  /// Why FSR 4 cannot be chosen here (the Upscaler row says it), FSR_OK when it can or is not known yet
@@ -688,13 +615,16 @@ index 6e10a95..26420fb 100644
  FsrWhy fsr4_why();
  /// Loads AMD's library once and asks it for an FSR 4 upscaler for this device, so fsr4_why knows before the first upscale
  /// (the menu, when it opens). Nothing in a build without FSR, or before the device is made
- void fsr4_probe();
+@@ -20,6 +20,7 @@ void fsr4_probe();
+ /// The window closing (mkwvk_close_asked, before the pipeline cache's save): the tuned layers' background builds stopped,
+ /// the one in the driver waited for (10 s at most). Nothing in a build without FSR
+ void fsr4_close();
 +void fsr4_failed();
  /// (linux) a Vulkan FSR 4 library is there and records with descriptor buffers: the device has to enable them
  bool fsr4_wants_descriptor_buffer();
  /// FSR 4 as the temporal upscaler's engine (FSR 4 and its native AA on the Upscaler row); nullptr in a build without it
 diff --git a/gpu/vk/vk_gprof.cpp b/gpu/vk/vk_gprof.cpp
-index 37a2bd3..21d297c 100644
+index 37a2bd30..21d297c8 100644
 --- a/gpu/vk/vk_gprof.cpp
 +++ b/gpu/vk/vk_gprof.cpp
 @@ -3,6 +3,7 @@
@@ -772,11 +702,11 @@ index 37a2bd3..21d297c 100644
      active_ns[0] = active_ns[1] = sum_ns[0] = sum_ns[1] = 0;
      recs[0] = recs[1] = dropped = 0;
 diff --git a/gpu/vk/vk_main.cpp b/gpu/vk/vk_main.cpp
-index 1c5afd4..ccf7e76 100644
+index 85eed011..e1a9eda9 100644
 --- a/gpu/vk/vk_main.cpp
 +++ b/gpu/vk/vk_main.cpp
-@@ -510,8 +510,18 @@ bool create_device() {
-     ci.pQueueCreateInfos = qs;
+@@ -681,8 +681,18 @@ bool create_device() {
+     ci.pQueueCreateInfos = qs.data();
      ci.enabledExtensionCount = (uint32_t)want.size();
      ci.ppEnabledExtensionNames = want.data();
 -    if (vkCreateDevice(dev.physical, &ci, nullptr, &dev.device) != VK_SUCCESS) {
@@ -797,18 +727,10 @@ index 1c5afd4..ccf7e76 100644
      }
  
 diff --git a/gpu/vk/vk_menu.cpp b/gpu/vk/vk_menu.cpp
-index 3985f3e..403c211 100644
+index da0e91f3..8be9972f 100644
 --- a/gpu/vk/vk_menu.cpp
 +++ b/gpu/vk/vk_menu.cpp
-@@ -29,6 +29,7 @@
- 
- #include "vk_paths.h"
- #include "vk_menu.h"
-+#include "gpu_profile.h"
- #include "perf_monitor.h"
- #include "vk_menu_hit.h"
- #include "vk_fps.h"    // (the FPS counter's levels and numbers)
-@@ -229,7 +230,8 @@ const char* hn_upscaler(int v, int variant) {
+@@ -256,7 +256,8 @@ const char* hn_upscaler(int v, int variant) {
      v = std::clamp(v, 0, ur::kUpscalers - 1);
      // (the reasons are said only where the engine is in the build: one without FSR does not tell an NVIDIA user why)
      const char* dn = dlss_built() || variant >= 0 ? dlss_no[d] : nullptr;
@@ -818,47 +740,19 @@ index 3985f3e..403c211 100644
      if (v != ur::GAME || (!dn && !fn)) return t[v];
      static char b[DLSS_WHY_COUNT][FSR_WHY_COUNT][320];
      snprintf(b[d][f], sizeof b[d][f], "%s%s%s%s%s", t[0], dn ? " " : "", dn ? dn : "", fn ? " " : "", fn ? fn : "");
-@@ -611,12 +613,21 @@ void apply_preset(int p) {
-     sync_preset_budgets(p);
- }
- 
--MENU_HINTS(hn_preset, 0, "Each row as you set it. Changing most rows yourself comes back to Custom, with the preset's memory caps kept.",
--           "Resolution 50% (with DLSS its nearest mode), Lanczos, Sharpness 30%, the Handheld Profile.",
--           "Resolution 75% (with DLSS its nearest mode), Lanczos, Sharpness 30%, the Handheld Profile.",
--           "Resolution 100% (with DLSS its nearest mode), Catmull-Rom, Sharpness 30%.",
--           "Resolution 100% (with DLSS its nearest mode), Lanczos, Sharpness 40%.",
--           "Resolution 100% (with DLSS its nearest mode), Lanczos, Sharpness 50%.")
-+const char* hn_preset(int value, int variant) {
-+    if (variant > 0) return nullptr;
-+    if (variant == 0) return "Suggested starting preset: Minimum Low Balanced High Ultra. Select it to apply. For 60 FPS testing, turn Frame generation Off.";
-+    if (value != 0) return "Applies this preset's scaling and resource limits. Upscaler and Frame generation stay as selected.";
-+    static char hint[160];
-+    if (!dev.device) return "Choose a preset to apply its settings.";
-+    uint64_t local = 0, used = 0, budget = 0;
-+    for (uint32_t h = 0; h < dev.memory.memoryHeapCount; ++h)
-+        if (dev.memory.memoryHeaps[h].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) local += dev.memory.memoryHeaps[h].size;
-+    if (!dev.memory_budget || !vram_usage(&used, &budget)) budget = 0;
-+    const int suggested = recommended_preset(dev.props.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU, local, budget);
-+    snprintf(hint, sizeof hint, "Suggested starting preset: %s. Select it to apply. For 60 FPS testing, turn Frame generation Off.",
-+             tx_preset(suggested));
-+    return hint;
-+}
- MENU_HINTS(hn_gpu, 0, "The best dedicated GPU.")
- /// Frame generation: how many frames are made for each of the game's
- const char* hn_framegen(int v, int variant) {
 diff --git a/gpu/vk/vk_temporal.cpp b/gpu/vk/vk_temporal.cpp
-index fe8fa60..8fc6c24 100644
+index 22793ca2..2244a14f 100644
 --- a/gpu/vk/vk_temporal.cpp
 +++ b/gpu/vk/vk_temporal.cpp
-@@ -36,6 +36,7 @@
+@@ -40,6 +40,7 @@
  // in it); =alternate: every other frame the game's own upscale (a test's reference beside the engine's). (The names are
- // DLSS's from before FSR came: they apply to either engine.)
+ // DLSS's from before FSR came: they apply to every engine of the chain, FSR 3.1 on it too.)
  #include "vk_temporal.h"
 +#include "vk_gprof.h"
  
  #include <algorithm>
  #include <atomic>
-@@ -197,7 +198,8 @@ struct State {
+@@ -238,7 +239,8 @@ struct State {
      uint64_t engines_made = 0;  // (prepare's new histories: a feature or context made again, each a stall in play)
      float status_jitter[2]{};   // (the last evaluation's jitter, in render pixels, and whether it had motion)
      bool status_motion = false;
@@ -868,7 +762,7 @@ index fe8fa60..8fc6c24 100644
      std::vector<Dead> dead;   // (what work in flight may still use: freed a few frames on)
      uint64_t asked = 0;       // (the frame an upscale last asked for an engine: temporal_idle)
      std::atomic<bool> holding{false};   // (an engine's state, images or frees still to do: temporal_idle has something to let go)
-@@ -242,12 +244,15 @@ bool fail(const char* why) {   // (the network runs: why, when it changes and ev
+@@ -286,12 +288,15 @@ bool fail(const char* why) {   // (the network runs: why, when it changes and ev
      return false;
  }
  
@@ -886,7 +780,7 @@ index fe8fa60..8fc6c24 100644
              s.dead[i].free();
              s.dead[i] = std::move(s.dead.back());
              s.dead.pop_back();
-@@ -257,13 +262,15 @@ void free_dead(bool all) {
+@@ -301,13 +306,15 @@ void free_dead(bool all) {
      }
  }
  
@@ -905,9 +799,9 @@ index fe8fa60..8fc6c24 100644
      im = {};
  }
  
-@@ -627,6 +634,11 @@ void drop_all() {
- 
- void temporal_later(std::function<void()> f) { later(std::move(f)); }
+@@ -823,6 +830,11 @@ bool temporal_colour_pair(VkFormat input, VkFormat output) {
+            temporal_scene_format(input);
+ }
  
 +void temporal_after_gpu(std::function<void()> f) {
 +    const uint64_t value = vk_retirement_value();
@@ -917,7 +811,7 @@ index fe8fa60..8fc6c24 100644
  void temporal_note_scene_draw(const Texture* color0, uint32_t width, uint32_t height, Texture* depth, uint64_t camera,
                                uint64_t camera_size) {
      // (only a size the gameplay upscale's output can come from: 1 to 3 times smaller. A smaller target with a camera (the
-@@ -719,6 +731,7 @@ void temporal_idle() {
+@@ -937,6 +949,7 @@ void temporal_idle() {
      if (!s.holding.load(std::memory_order_relaxed)) return;
      std::lock_guard lk(s.mu);
      const uint64_t now = texture_frame_no();
@@ -925,7 +819,7 @@ index fe8fa60..8fc6c24 100644
      if (now - s.asked <= 120) return;   // (in use, or off for under 120 frames (2 s): kept, a row stepped through comes back at once)
      // (hookshot, a stutter: kept too while DLSS or FSR 4 is still the Upscaler's choice. Each area change's loading screen has no
      // gameplay upscale for 2 s and more, and DLSS's feature let go then was made again at the next area's first frame: 44-78 ms
-@@ -733,6 +746,7 @@ void temporal_idle() {
+@@ -951,6 +964,7 @@ void temporal_idle() {
          s.drawing = nullptr;
      }
      drop_all();
@@ -933,7 +827,7 @@ index fe8fa60..8fc6c24 100644
      s.last_frame = 0;   // (a new history when it comes back)
      free_dead(false);
      s.holding = !s.dead.empty();
-@@ -873,6 +887,7 @@ bool temporal_upscale(VkCommandBuffer cmd, uint64_t key, bool known, Texture* in
+@@ -1132,6 +1146,7 @@ bool temporal_upscale(VkCommandBuffer cmd, uint64_t key, bool known, Texture* in
      }
      if (!make_pipelines()) {
          engine.failed = true;
@@ -941,7 +835,7 @@ index fe8fa60..8fc6c24 100644
          return fail("its shaders were not made");
      }
      const VkImageView dview = depth_view(cam.depth);
-@@ -897,9 +912,18 @@ bool temporal_upscale(VkCommandBuffer cmd, uint64_t key, bool known, Texture* in
+@@ -1169,9 +1184,18 @@ bool temporal_upscale(VkCommandBuffer cmd, uint64_t key, bool known, Texture* in
      } disturbed;
      uint32_t iw = rw, ih = rh;
      const char* why = nullptr;
@@ -953,14 +847,14 @@ index fe8fa60..8fc6c24 100644
 +        s.fsr_output_h = dh;
 +        s.last_frame = 0;
 +    }
-     const int ready = engine.e->prepare(cmd, rw, rh, dw, dh, &iw, &ih, &why);
+     const int ready = engine.e->prepare(cmd, rw, rh, dw, dh, native, &iw, &ih, &why);
      if (ready < 0) {
          engine.failed = true;
 +        if (ur::is_fsr4(mode)) fsr4_failed();
          return fail(why ? why : "it could not be made");
      }
      if (ready == 0) return fail(why ? why : "not this frame");
-@@ -926,7 +950,11 @@ bool temporal_upscale(VkCommandBuffer cmd, uint64_t key, bool known, Texture* in
+@@ -1224,7 +1248,11 @@ bool temporal_upscale(VkCommandBuffer cmd, uint64_t key, bool known, Texture* in
      float previous[16];
      std::memcpy(previous, s.last_vp, sizeof previous);
      dlss_math::unjitter(previous, s.last_jitter);
@@ -972,16 +866,16 @@ index fe8fa60..8fc6c24 100644
 +    }
      if (!motion) reset = true;   // (without a valid reprojection, prior history has no mapping to this camera)
      pc.jitter[0] = cam.jitter[0], pc.jitter[1] = cam.jitter[1];
-     pc.size[0] = (int32_t)rw, pc.size[1] = (int32_t)rh, pc.flags = (motion ? 1 : 0) | (show_motion ? 2 : 0);
-@@ -948,6 +976,7 @@ bool temporal_upscale(VkCommandBuffer cmd, uint64_t key, bool known, Texture* in
-         vkCmdPushConstants(cmd, s.prep_layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof pc, &pc);
+     pc.size[0] = (int32_t)rw, pc.size[1] = (int32_t)rh;
+@@ -1256,6 +1284,7 @@ bool temporal_upscale(VkCommandBuffer cmd, uint64_t key, bool known, Texture* in
+         vkCmdPushConstants(cmd, prep_layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof pc, &pc);
          vkCmdDispatch(cmd, (rw + 7) / 8, (rh + 7) / 8, 1);
      };
 +    const bool timed_prep = fsr4 && gprof_begin(cmd);
      full_barrier(cmd);   // (the scene's colour and depth, written before)
      prep();
      full_barrier(cmd);
-@@ -959,6 +988,7 @@ bool temporal_upscale(VkCommandBuffer cmd, uint64_t key, bool known, Texture* in
+@@ -1267,6 +1296,7 @@ bool temporal_upscale(VkCommandBuffer cmd, uint64_t key, bool known, Texture* in
          prep();
          full_barrier(cmd);
      }
@@ -989,8 +883,8 @@ index fe8fa60..8fc6c24 100644
      TemporalFrame f;
      f.color = s.color.shown(), f.depth = s.depth.shown(), f.motion = s.motion.shown(), f.output = s.output.shown();
      f.render_w = rw, f.render_h = rh;
-@@ -974,8 +1004,10 @@ bool temporal_upscale(VkCommandBuffer cmd, uint64_t key, bool known, Texture* in
-     if (!engine.e->evaluate(cmd, f)) {
+@@ -1289,8 +1319,10 @@ bool temporal_upscale(VkCommandBuffer cmd, uint64_t key, bool known, Texture* in
+         }
          logf("vk: %s: its evaluation failed: the game's upscale from now on", engine.e->name);
          engine.failed = true;
 +        if (ur::is_fsr4(mode)) fsr4_failed();
@@ -1000,19 +894,19 @@ index fe8fa60..8fc6c24 100644
      full_barrier(cmd);
      {
          const int32_t opc[2] = {(int32_t)ow, (int32_t)oh};
-@@ -991,6 +1023,7 @@ bool temporal_upscale(VkCommandBuffer cmd, uint64_t key, bool known, Texture* in
-         vkCmdPushConstants(cmd, s.out_layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof opc, opc);
+@@ -1306,6 +1338,7 @@ bool temporal_upscale(VkCommandBuffer cmd, uint64_t key, bool known, Texture* in
+         vkCmdPushConstants(cmd, out_layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof opc, opc);
          vkCmdDispatch(cmd, (ow + 7) / 8, (oh + 7) / 8, 1);
      }
 +    if (timed_output) gprof_end(cmd, "FSR 4 Mako output");
      redstone_note_frame(f, out, ow, oh);   // (Mako: Redstone frame generation's depth, motion and picture)
-     s.last_frame = now;
-     s.last_jitter[0] = cam.jitter[0], s.last_jitter[1] = cam.jitter[1];
+     // (NVIDIA DLSS Frame Generation through NGX, vk_dlss.cpp: this frame's depth, motion and camera for the present's made
+     // frames. Nothing unless the run asked for it)
 diff --git a/gpu/vk/vk_temporal.h b/gpu/vk/vk_temporal.h
-index e100bab..1624884 100644
+index e5721261..984c7367 100644
 --- a/gpu/vk/vk_temporal.h
 +++ b/gpu/vk/vk_temporal.h
-@@ -121,5 +121,7 @@ struct TemporalEngine {
+@@ -144,5 +144,7 @@ struct TemporalEngine {
  };
  /// Runs f a few frames on, to free what work in flight may still use. Called by the engines with the chain's lock held
  void temporal_later(std::function<void()> f);
@@ -1021,7 +915,7 @@ index e100bab..1624884 100644
  
  } // namespace mkwvk
 diff --git a/tests/temporal_history_test.cpp b/tests/temporal_history_test.cpp
-index 16acb1a..774212d 100644
+index 16acb1a7..774212db 100644
 --- a/tests/temporal_history_test.cpp
 +++ b/tests/temporal_history_test.cpp
 @@ -16,10 +16,11 @@ struct State {
@@ -1089,7 +983,7 @@ index 16acb1a..774212d 100644
              check(dlss_math::reprojection(camera.current, s.last_vp, out), "valid perspective rejected");
              for (float v : out) check(std::isfinite(v), "accepted non-finite shader coefficient");
 diff --git a/tests/test_dlss_math.cpp b/tests/test_dlss_math.cpp
-index 432ae3f..034a642 100644
+index 432ae3f1..034a6429 100644
 --- a/tests/test_dlss_math.cpp
 +++ b/tests/test_dlss_math.cpp
 @@ -41,6 +41,17 @@ static void motion(const float reproject[16], float x, float y, float d, const f
@@ -1112,7 +1006,7 @@ index 432ae3f..034a642 100644
      CHECK("halton base 3", near(dlss_halton(1, 3), 1 / 3.0f) && near(dlss_halton(2, 3), 2 / 3.0f) && near(dlss_halton(3, 3), 1 / 9.0f));
 diff --git a/tests/test_pipeline_cache_budget.cpp b/tests/test_pipeline_cache_budget.cpp
 new file mode 100644
-index 0000000..450821e
+index 00000000..450821ec
 --- /dev/null
 +++ b/tests/test_pipeline_cache_budget.cpp
 @@ -0,0 +1,12 @@
@@ -1129,7 +1023,7 @@ index 0000000..450821e
 +static_assert(!pipeline_cache_fits_commit(UINT64_MAX, UINT64_MAX));
 +int main() {}
 diff --git a/tests/test_temporal_history.py b/tests/test_temporal_history.py
-index a7851db..1ffdbb9 100644
+index a7851db2..42e356f8 100644
 --- a/tests/test_temporal_history.py
 +++ b/tests/test_temporal_history.py
 @@ -25,8 +25,10 @@ def main():
@@ -1139,7 +1033,7 @@ index a7851db..1ffdbb9 100644
 +    fsr_dispatch = (a.source / "gpu/vk/vk_fsr3.cpp").read_text(encoding="utf-8")
      fixture = (ROOT / "tests/temporal_history_test.cpp").read_text(encoding="utf-8")
      assert "engine.e->evaluate(cmd, f)" in chain, "the shared frame must reach the selected engine"
-+    fixture = fixture.replace("/* FSR_DISPATCH_POLICY */", re.search(r"ai\.reset = f\.reset[^;]*;", fsr_dispatch).group())
++    fixture = fixture.replace("/* FSR_DISPATCH_POLICY */", re.search(r"ai\.reset = f\.reset \|\| !o\.last_upscaled_frame[^;]*;", fsr_dispatch).group())
      chain_sink = re.search(r"f\.reset = [^;]+;", chain).group()
      dlss_sink = re.search(r"ep\.InReset = [^;]+;", dlss).group()
      fsr4_sink = re.search(r"d\.reset = [^;]+;", fsr4).group()

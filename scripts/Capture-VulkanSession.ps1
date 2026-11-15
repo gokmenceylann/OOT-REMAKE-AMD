@@ -32,8 +32,15 @@ $lineCount = 0
 $lastLine = $null
 $source = 'stderr'
 $failure = $null
-$nativeLog = Join-Path $root 'hookshot_log.txt'
-$previousNativeLog = Get-Item -LiteralPath $nativeLog -ErrorAction SilentlyContinue
+$nativeLogs = @(
+    (Join-Path $root 'logs/hookshot_log.txt'),
+    (Join-Path $root 'hookshot_log.txt')
+)
+$previousNativeWrites = @{}
+foreach ($nativeLog in $nativeLogs) {
+    $previous = Get-Item -LiteralPath $nativeLog -ErrorAction SilentlyContinue
+    if ($previous) { $previousNativeWrites[$nativeLog] = $previous.LastWriteTimeUtc }
+}
 $stream = [IO.File]::Open($stderr, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::Read)
 $writer = New-Object IO.StreamWriter($stream, (New-Object Text.UTF8Encoding($false)))
 $writer.AutoFlush = $true
@@ -50,16 +57,21 @@ try {
     }
     $process.WaitForExit()
     $exitCode = $process.ExitCode
-    $currentNativeLog = Get-Item -LiteralPath $nativeLog -ErrorAction SilentlyContinue
-    if ($lineCount -eq 0 -and $currentNativeLog -and $currentNativeLog.Length -gt 0 -and
-        $currentNativeLog.LastWriteTimeUtc -ge $started.UtcDateTime -and
-        (!$previousNativeLog -or $currentNativeLog.LastWriteTimeUtc -ne $previousNativeLog.LastWriteTimeUtc)) {
-        $source = 'native-file'
-        foreach ($line in [IO.File]::ReadLines($nativeLog)) {
-            if ([string]::IsNullOrWhiteSpace($line)) { continue }
-            $writer.WriteLine($line)
-            $lineCount++
-            $lastLine = $line
+    if ($lineCount -eq 0) {
+        foreach ($nativeLog in $nativeLogs) {
+            $current = Get-Item -LiteralPath $nativeLog -ErrorAction SilentlyContinue
+            if (!$current -or !$current.Length -or $current.LastWriteTimeUtc -lt $started.UtcDateTime -or
+                $current.LastWriteTimeUtc -in $previousNativeWrites.Values) { continue }
+            foreach ($line in [IO.File]::ReadLines($nativeLog)) {
+                if ([string]::IsNullOrWhiteSpace($line)) { continue }
+                $writer.WriteLine($line)
+                $lineCount++
+                $lastLine = $line
+            }
+            if ($lineCount) {
+                $source = 'native-file'
+                break
+            }
         }
     }
     if (!$lineCount) { throw 'No renderer messages in stderr or a fresh hookshot_log.txt.' }

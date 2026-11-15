@@ -17,8 +17,9 @@ int main(void) {
     const char *mode = getenv("RX_CAPTURE_TEST_MODE");
     if (!mode) return 1;
     if (!strcmp(mode, "stderr")) fputs("vk: fixture initialized\n", stderr);
-    if (!strcmp(mode, "native")) {
-        FILE *log = fopen("hookshot_log.txt", "w");
+    if (!strcmp(mode, "native") || !strcmp(mode, "nested")) {
+        const char *path = !strcmp(mode, "nested") ? "logs/hookshot_log.txt" : "hookshot_log.txt";
+        FILE *log = fopen(path, "w");
         if (!log) return 2;
         fputs("vk: native log\n", log);
         fclose(log);
@@ -32,9 +33,10 @@ int main(void) {
 "@ | Set-Content -LiteralPath $fixture -Encoding ASCII
 & $Clang $fixture -o (Join-Path $root 'hookshot.exe')
 if ($LASTEXITCODE -ne 0) { throw 'Fixture compilation failed.' }
+[void][IO.Directory]::CreateDirectory((Join-Path $root 'logs'))
 $oldMode = $env:RX_CAPTURE_TEST_MODE
 try {
-    foreach ($mode in 'stderr','native','empty') {
+    foreach ($mode in 'stderr','native','nested','empty') {
         $env:RX_CAPTURE_TEST_MODE = $mode
         $out = Join-Path $root $mode
         $errorMessage = $null
@@ -51,8 +53,9 @@ try {
             }
             continue
         }
+        $expectedSource = if ($mode -eq 'stderr') { 'stderr' } else { 'native-file' }
         if ($errorMessage -or $session.RendererLogLines -ne 1 -or $session.ExitCode -ne 0 -or
-            $session.RendererLogSource -ne $mode.Replace('native', 'native-file')) {
+            $session.RendererLogSource -ne $expectedSource) {
             throw "Unexpected capture result for $mode. $errorMessage"
         }
         $stats = Get-Content -Raw -LiteralPath $summary | ConvertFrom-Json
