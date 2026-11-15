@@ -132,3 +132,20 @@ eşitlemesi görüldü.
   testleri geçince. Paket, kaynak ve yerel import araçları
   üzerinden dağıtılır. İlk dal hazırlığında yeni build,
   runtime testi veya Release yapılmaz.
+
+## İlk onaylı adım
+
+Windows Vulkan CI iki Mako kaynak regresyonunu, kararlı FSR ve
+Radeon yamalarından sonra ve renderer link işleminden önce
+çalıştırır. Worker testi, worker/serial/steal yollarında standart
+ve standart dışı istisna sonrası bekleyenin serbest kalmasını,
+sonraki işin bitmesini ve kaynakların başarı/hata durumlarını
+kontrol eder. Import testi host ve simüle DMA yollarında
+37 tahsis, bind, rollback, fallback ve retry-hold vakası çalıştırır.
+
+Mako 4.1.1 üretim import kodu Windows'ta VirtualProtect kullanır.
+Upstream test fixture'ı bu Win32 çağrısının stand-in'ini içermediği
+için ilk yerel Windows derlemesi durdu. Test-only
+`patches/mako-411-regression-fixture.patch` isteğe bağlı koruma
+yükseltmesinin başarısız olduğunu modeller. Gerçek Vulkan
+renderer veya allocator davranışını değiştirmez.

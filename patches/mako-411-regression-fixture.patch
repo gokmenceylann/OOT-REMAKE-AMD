@@ -1,0 +1,17 @@
+--- a/tests/import_buffer_binding_test.cpp
++++ b/tests/import_buffer_binding_test.cpp
+@@ -52,6 +52,14 @@
+ struct MEMORY_BASIC_INFORMATION { uint8_t* BaseAddress; size_t RegionSize; int State; };
+ void* VirtualAlloc(void* p, size_t, int, int) { return p; }
+ size_t VirtualQuery(void*, MEMORY_BASIC_INFORMATION*, size_t) { return 0; }
++#ifdef _WIN32
++using DWORD = uint32_t;
++constexpr DWORD PAGE_EXECUTE_READWRITE = 0x40;
++// The fixture owns no real guest pages. Model a failed optional protection upgrade
++// so import_pool exercises its normal committed host-pointer fallback.
++bool VirtualProtect(void*, size_t, DWORD, DWORD*) { return false; }
++#endif
++
+ VkResult vkGetMemoryHostPointerPropertiesEXT(VkDevice, VkExternalMemoryHandleTypeFlagBits, const void*, VkMemoryHostPointerPropertiesEXT* hp) {
+     if (fault == Fault::Properties) return VK_ERROR_OUT_OF_HOST_MEMORY;
+     hp->memoryTypeBits = 1; return VK_SUCCESS;
