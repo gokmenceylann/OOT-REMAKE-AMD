@@ -29,6 +29,7 @@ function Get-TailFps([double]$Fraction) {
 [pscustomobject]@{
     SampleCount = $sorted.Count
     AverageFps = [Math]::Round(1000 / ($times | Measure-Object -Average).Average, 2)
+    AverageFrameTimeMs = [Math]::Round(($times | Measure-Object -Average).Average, 3)
     Low1PercentFps = Get-TailFps 0.01
     LowPoint1PercentFps = Get-TailFps 0.001
     P95Ms = $sorted[[int][Math]::Ceiling(0.95 * $sorted.Count) - 1]

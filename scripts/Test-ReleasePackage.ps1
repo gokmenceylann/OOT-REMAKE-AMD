@@ -17,7 +17,7 @@ Add-Type -AssemblyName System.IO.Compression.FileSystem
 $archive = [IO.Compression.ZipFile]::OpenRead($zip[0].FullName)
 try {
     $entries = @($archive.Entries | Where-Object Name | ForEach-Object { $_.FullName.Replace('\','/') })
-    foreach ($name in 'README.md','README.tr.md','LICENSE','THIRD-PARTY.md','VERSION.txt','scripts/Test-LocalGame.ps1') {
+    foreach ($name in 'README.md','README.tr.md','LICENSE','THIRD-PARTY.md','VERSION.txt','scripts/Test-LocalGame.ps1','scripts/Capture-VulkanSession.ps1','scripts/Measure-FrameTimes.ps1') {
         if ($name -notin $entries) { throw "Missing ZIP member: $name" }
     }
     if ($entries -match '(?i)\.(exe|dll|nup|nso|nca|xci|keys|bin)$|(^|/)(romfs|exefs|user)/') {
