@@ -1,0 +1,15 @@
+--- a/gpu/vk/vk_draw.cpp
++++ b/gpu/vk/vk_draw.cpp
+@@ -2837,8 +2837,10 @@
+     if (built_us >= 300000) {   // (Mako §78: what the slow ones are: AMD's optimizer took 5-13 s each for Volvagia's intro)
+         static std::atomic<int> told{0};
+         if (told++ < 200)
+-            logf("vk: graphics pipeline of %016llx: SLOW build, %lld ms%s%s", (unsigned long long)p.key, (long long)(built_us / 1000),
+-                 (ci.flags & VK_PIPELINE_CREATE_DISABLE_OPTIMIZATION_BIT) ? ", without the optimizer" : "", quick_build ? " (quick)" : "");
++            logf("vk: graphics pipeline of %016llx: SLOW build, %lld ms%s%s; pipeline_key=%016llx VkResult=%d feedback=0x%x",
++                 (unsigned long long)p.key, (long long)(built_us / 1000),
++                 (ci.flags & VK_PIPELINE_CREATE_DISABLE_OPTIMIZATION_BIT) ? ", without the optimizer" : "", quick_build ? " (quick)" : "",
++                 (unsigned long long)pipeline_key(p, s, at, topo), (int)r, (unsigned)fb_one.flags);
+     }
+     return pl;
+ }

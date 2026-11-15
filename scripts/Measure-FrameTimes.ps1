@@ -32,7 +32,12 @@ function Get-TailFps([double]$Fraction) {
     AverageFrameTimeMs = [Math]::Round(($times | Measure-Object -Average).Average, 3)
     Low1PercentFps = Get-TailFps 0.01
     LowPoint1PercentFps = Get-TailFps 0.001
+    P50Ms = $sorted[[int][Math]::Ceiling(0.50 * $sorted.Count) - 1]
     P95Ms = $sorted[[int][Math]::Ceiling(0.95 * $sorted.Count) - 1]
     P99Ms = $sorted[[int][Math]::Ceiling(0.99 * $sorted.Count) - 1]
+    MaxMs = $sorted[-1]
+    Over33Point3Ms = @($times | Where-Object { $_ -gt (1000 / 30) }).Count
+    Over50Ms = @($times | Where-Object { $_ -gt 50 }).Count
+    Over100Ms = @($times | Where-Object { $_ -gt 100 }).Count
     Over60FpsBudget = @($times | Where-Object { $_ -gt (1000 / 60) }).Count
 }
