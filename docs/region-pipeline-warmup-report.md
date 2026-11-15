@@ -97,3 +97,88 @@ Bölge profili bilinen anahtarları öne alır. Tek bir rota
 gözlemi sonraki koşunun tüm pipeline varyantlarını kapsamaya
 yetmedi. Uzun compile miss'leri sunumun kritik yolunda
 kaldığından kalıcı düzeltme ve kararlı Release yok.
+
+## Pipeline kullanımı üzerinden öğrenme
+
+`patches/pipeline-region-use.patch` isteğe bağlı
+`RX_VK_PIPE_REGION_TRACE=1` ile graphics draw ve compute dispatch
+kaydının ardından anahtar yayınlar. Graphics tam pipeline anahtarını,
+compute program ve varyant çiftini kaydeder. Her replay thread'i
+aynı anahtarı 60 karelik pencerede bir kez yazar. Ayrı profiling
+geçişinde kullanılır. CPU ve log maliyeti nedeniyle bu ölçümle
+normal oturum FPS'si karşılaştırılmaz. FSR gibi renderer'ın kendi
+compute efektleri ve mesh fallback yardımcı dispatch'leri bu
+profilin kapsamında değildir.
+
+Exporter, doğrulanmış harita aralığındaki kullanım ve önceki yavaş
+derleme kayıtlarını birleştirir. Birden fazla `--log` ve isteğe
+bağlı `--age child|adult` kabul eder. Tüm gözlenen anahtarları
+profilde tutar. Yavaş derlemelere, ardından compute kayıtlarına
+ve farklı oturumlarda tekrar görülen graphics kayıtlarına öncelik
+verir. Bir GPU ve sürücü kimliği dışındaki birleşimleri reddeder.
+Atomik dosya yazımı ve eski profil başlığı korunur. Eski renderer
+compute satırlarını tanımaz, graphics satırlarını okuyabilir.
+
+Açılış renderer'ı ilk 256 profil satırından, başlangıç limitini
+aşmadan eşleşme arar. En fazla 16 compute varyantı talep edilir.
+Compute yalnızca doğrulanmış yerel program cache içindeki aynı
+anahtar ve varyantla hazırlanır. Mevcut worker önce Vulkan cache
+yolunu dener ve yalnız geçerli pipeline yayımlar. Motion vectors,
+FSR, FG ve swapchain zinciri değiştirilmedi.
+
+### Kritik yoldaki bekleme
+
+`graphics_pipeline` hızlı lookup ve tam anahtar tablosunu kullanır.
+Eksik kayıt için oluşturulan tek `PipeEntry`, worker sonucu
+hazır olana kadar beklenir. Strict modda `draw` çağrısı
+`jobs_wait` üzerinden işi kuyruktan devralabilir. Worker işi
+almışsa süre sınırı olmayan koşul değişkeni beklemesi vardır.
+Compute yolunun isteğe bağlı kısa beklemeleri ile zorunlu
+mesh fallback işlerindeki beklemeler farklıdır. Aynı shader
+programı da birden çok graphics pipeline varyantına sahip
+olabilir. Güvenli command replay veya sahne giriş planı olmadan
+zorunlu çizim için bu beklemeyi kesmek görüntü ve kaynak
+doğruluğunu bozabilir. Bu yama bekleme veya kapatma sözleşmesini
+değiştirmez. Oyun içi otomatik ön hazırlık ve yeni compile
+miss'ini kritik yoldan çıkaran planlama henüz yok.
+
+Windows x64 Vulkan DLL sıfır hatayla derlendi. Sabit upstream
+üzerine önceki yamalarla uyumluluk ve üç exporter testi geçti.
+Testler doğrulanmış geçişi, başarılı kullanımı, anahtar
+tekilleştirmesini, yaş filtresini ve farklı sürücü kayıtlarının
+birleştirilmemesini kapsar. Otomatik Vulkan queue/lifetime
+regresyonu bu değişiklik için eklenmedi.
+
+### RX 6700M kullanım profili ve tekrar açılış testi
+
+FG Off, strict bekleme ve 1536×864 FSR 4.1.2 Native AA
+kullanıldı. Kullanım kaydı Castle Town çocuk profiline
+1.046 graphics ve 95 compute, Hyrule Field çocuk profiline
+664 graphics ve 86 compute anahtarı verdi. Castle Town profili
+bir eski ve bir yeni oturumdan birleşti. Hyrule Field profili
+tek yeni oturumdan geldi. Temple of Time profili oluşmadı.
+
+İlk koşuda Hyrule Field açıldı ve Castle Town'a giriş
+doğrulandı. Sunum 2282. karede durdu. Görüntü isteği zaman
+aşımına uğradı. WDDM'nin yoğun adaptörü 76 örnekte ayrı
+maksimumlar olarak 7,52 GiB dedicated ve 3,21 GiB shared
+gösterdi. CSV'deki menü ve yükleme dahil 2.293 aralıkta
+P50/P95/P99 16,71/28,72/74,62 ms ve maksimum 15.197 ms.
+Bunlar profiling aralıklarıdır.
+
+Yeniden başlatmada gerçek Castle Town profili 48 graphics
+ve 16 compute seçti. Hazırlık 442 ms sürdü. Log, 16 compute
+pipeline'ın da Vulkan cache'den geldiğini ve 0 yeni compute
+derlemesi yapıldığını doğruladı. Oyun içi FSR 4.1.2 dispatch'i
+yeniden görüldü. Castle Town'a giriş kaydedildi ancak sunum
+1696. karede durdu. Sunum iş parçacığında 23 yavaş derleme,
+toplam 30.543 ms ve maksimum 2.923 ms kaydedildi.
+Karışık 1.679 present aralığında P50/P95/P99
+16,83/35,29/105,17 ms ve maksimum 4.753 ms. Son donma
+bu dağılımda tamamlanmış aralık olarak yok. Bir 60 saniyelik
+sahne ölçümü veya önce/sonra FPS kazanımı doğrulanmadı.
+
+Ayrı EXE
+`D:\codex\OOT-REMAKE-AMD\pipeline-region-use-staging\hookshot.exe`.
+Mevcut kurulum veya kararlı Release güncellenmedi. FG Auto,
+Temple of Time, tam geçiş matrisi ve görsel doğruluk açık.
