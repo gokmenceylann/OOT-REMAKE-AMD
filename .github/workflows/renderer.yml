@@ -2,7 +2,7 @@ name: Windows Vulkan renderer
 on:
   pull_request:
   push:
-    branches: [main]
+    branches: [main, mako-4.1.1-longshot]
 
 permissions:
   contents: read
@@ -47,6 +47,26 @@ jobs:
         run: |
           git -C upstream/mako apply --ignore-whitespace ../../patches/fsr-4.1.2.patch ../../patches/rx6700m-memory.patch
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Set up pinned LLVM MinGW
+        shell: pwsh
+        working-directory: upstream/mako
+        run: |
+          $mingw = python -I scripts/release_parts.py llvm-mingw "$env:RUNNER_TEMP/llvm"
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          "HOOKSHOT_MINGW=$mingw" >> $env:GITHUB_ENV
+          "$mingw/bin" >> $env:GITHUB_PATH
+      - name: Run Mako baseline renderer regressions
+        shell: pwsh
+        working-directory: upstream/mako
+        run: |
+          git apply --ignore-whitespace ../../patches/mako-411-regression-fixture.patch
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          $cxx = Join-Path $env:HOOKSHOT_MINGW 'bin/x86_64-w64-mingw32-clang++.exe'
+          $headers = Join-Path $env:GITHUB_WORKSPACE '_deps/cpm/vulkanheaders/v1.4.345/include'
+          python -I -B tests/test_jobs_failure.py --cxx $cxx
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          python -I -B tests/test_import_buffer_binding.py --cxx $cxx --headers $headers
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
       - name: Compile and link
         shell: pwsh
         working-directory: upstream/mako
@@ -54,8 +74,6 @@ jobs:
           RX_VK_ONLY: '1'
           HOOKSHOT_FSR: '1'
         run: |
-          $env:HOOKSHOT_MINGW = python -I scripts/release_parts.py llvm-mingw "$env:RUNNER_TEMP/llvm"
-          if ($LASTEXITCODE) { exit $LASTEXITCODE }
           $env:OOT_WORK = "$env:RUNNER_TEMP/oot-vk"
           $env:RX_CPM = "$env:GITHUB_WORKSPACE/_deps/cpm"
           python -I nx2/build.py --standalone --jobs 4
