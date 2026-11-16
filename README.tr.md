@@ -1,6 +1,6 @@
 # OOT-REMAKE-AMD
 
-Hookshot tabanlı Mako 4.1.1 üzerine kurulu Windows 11 x64 Ocarina of Time recomp projesi. AArch64 statik yeniden derleme, Horizon servisleri ve NVN2 → Vulkan çizimi kullanır. Oyun doğrudan `hookshot.exe` ile açılır.
+OOT-REMAKE-AMD, Zelda: Ocarina of Time’ın Switch 2 remake sürümünü Windows 11 x64 üzerinde yerel olarak yeniden derlemek ve test etmek için açık kaynaklı bir projedir. Hookshot tabanlı Mako 4.1.1, Vulkan ve AMD FSR 4.1.2 kullanır. Radeon RX 6700M üzerinde gerçek FSR 4.1.2 Vulkan çalışması loglarla doğrulandı. Diğer AMD modelleri, NVIDIA ve Intel GPU’lar henüz doğrulanmadı.
 
 Yayımlanan raporlar Radeon RX 6700M üzerinde yapılan kısmi doğrulamayı kayda geçiriyor. Castle Town takılmaları, Windows bellek taahhüdü baskısı ve bölge geçişlerindeki eksik çizimler için doğrulanmış bir çözüm henüz yok. Sorunu yeniden üreten testler ve ölçümle doğrulanan düzeltmeler katkıya açık. [Açık bulgular ve katkı takibi](https://github.com/gokmenceylann/OOT-REMAKE-AMD/issues/5)
 

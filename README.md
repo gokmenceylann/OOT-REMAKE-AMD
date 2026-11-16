@@ -1,16 +1,18 @@
-# OOT-REMAKE-AMD | Ocarina of Time PC recomp
+# OOT-REMAKE-AMD | Zelda: Ocarina of Time recomp on Windows
 
-An open-source Windows x64 project for locally building and testing a Zelda: Ocarina of Time PC port with Mako 4.1.1, Vulkan and AMD FidelityFX Super Resolution. The project maintains renderer patches, reproducible build instructions and hardware test reports. Run the locally built `hookshot.exe` directly.
+OOT-REMAKE-AMD is an open-source project for building and testing a local recompilation of the Zelda: Ocarina of Time Switch 2 remake on Windows 11 x64. It uses Mako 4.1.1, Vulkan and AMD FSR 4.1.2. The published performance tests record real FSR 4.1.2 Vulkan dispatch on a Radeon RX 6700M. Other AMD GPU models, NVIDIA GPUs and Intel GPUs remain unverified.
 
 The published results document partial validation on the Radeon RX 6700M. Castle Town stutter, Windows commit pressure and missing draws during area transitions remain unresolved. Reproductions and measured fixes are welcome. [Open findings and contribution track](https://github.com/gokmenceylann/OOT-REMAKE-AMD/issues/5)
 
 [Stable v0.1.6](https://github.com/gokmenceylann/OOT-REMAKE-AMD/releases/tag/v0.1.6) · [Diagnostics v0.2.0-rc.4](https://github.com/gokmenceylann/OOT-REMAKE-AMD/releases/tag/v0.2.0-rc.4) · [Downloads and requirements](docs/DOWNLOADS.md) · [Build from source](docs/BUILDING.md) · [Türkçe](README.tr.md)
 
+Use the setup or portable ZIP to import your matching local build and your own game data into a separate folder. Start `hookshot.exe` directly.
+
 ## Project scope and upstream
 
 [Mako 4.1.1 at `b77ac861`](https://github.com/Shakoquo/Mako/tree/b77ac86187330eb7447ac65ab23187baac4600ca) supplies Hookshot-derived AArch64 static recompilation, the Horizon host runtime and the NVN2-to-Vulkan renderer. This repository pins that source and layers AMD Vulkan compatibility and diagnostics on top. The [architecture guide](docs/ARCHITECTURE.md) maps the upstream code, project patches and build output.
 
-Published hardware verification is limited to the Radeon RX 6700M configuration. Other AMD models, NVIDIA GPUs and Intel GPUs remain unverified. Vulkan compatibility reports are welcome. [GPU matrix](docs/GPU_COMPATIBILITY.md)
+See the [GPU matrix](docs/GPU_COMPATIBILITY.md) for verified scenarios and the information to include in a compatibility report.
 
 ## What works and what is under investigation
 
