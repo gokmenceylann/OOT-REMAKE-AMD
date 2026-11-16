@@ -45,7 +45,7 @@ jobs:
       - name: Apply renderer patches
         shell: pwsh
         run: |
-          git -C upstream/mako apply --ignore-whitespace ../../patches/fsr-4.1.2.patch ../../patches/rx6700m-memory.patch ../../patches/mako-411-pipeline-queue.patch ../../patches/mako-411-on-demand-startup.patch
+          git -C upstream/mako apply --ignore-whitespace ../../patches/fsr-4.1.2.patch ../../patches/rx6700m-memory.patch ../../patches/mako-411-pipeline-queue.patch ../../patches/mako-411-on-demand-startup.patch ../../patches/mako-411-cache-commit-budget.patch
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
       - name: Set up pinned LLVM MinGW
         shell: pwsh
@@ -66,6 +66,8 @@ jobs:
           python -I -B ../../tests/test_mako_startup_policy.py --source . --cxx $cxx
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           python -I -B tests/test_quick_pipelines.py --cxx $cxx
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          python -I -B ../../tests/test_mako_cache_commit.py --source . --cxx $cxx
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           python -I -B tests/test_jobs_wait_runs_queued.py --cxx $cxx
           if ($LASTEXITCODE) { exit $LASTEXITCODE }

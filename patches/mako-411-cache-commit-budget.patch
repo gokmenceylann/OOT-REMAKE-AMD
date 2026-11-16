@@ -1,0 +1,76 @@
+diff --git a/gpu/vk/vk_draw.cpp b/gpu/vk/vk_draw.cpp
+--- a/gpu/vk/vk_draw.cpp
++++ b/gpu/vk/vk_draw.cpp
+@@ -857,6 +857,23 @@ size_t play_file_write(VkPipelineCache cache, const std::string& path, int wait_
+     }
+     return data.publish(n) ? n : 0;
+ }
++bool pipeline_cache_import_allowed(const std::string& path, size_t bytes) {
++#ifdef _WIN32
++    MEMORYSTATUSEX status{};
++    status.dwLength = sizeof status;
++    const bool measured = GlobalMemoryStatusEx(&status) && status.ullTotalPageFile &&
++                          status.ullAvailPageFile <= status.ullTotalPageFile;
++    if (!measured || !pipeline_cache_fits_commit(bytes, status.ullAvailPageFile)) {
++        logf("vk: pipeline cache retained on disk: %zu bytes, available commit %llu bytes (measurement valid=%d): %s",
++             bytes, (unsigned long long)status.ullAvailPageFile, (int)measured, path.c_str());
++        return false;
++    }
++#else
++    (void)path;
++    (void)bytes;
++#endif
++    return true;
++}
+ /// (pcache_init, before any other thread has pcache) the play files the last starts wrote, merged into pcache; at kPlayFilesKept
+ /// of them pcache is written into its file and they are removed. A file of another driver is of no use: removed. The number merged
+ size_t play_files_merge() {
+@@ -881,11 +898,22 @@ size_t play_files_merge() {
+             if (part.rejected()) remove(path.c_str()); // Only a proven incompatible header can discard a generation.
+             continue;
+         }
+-        if (vkCreatePipelineCache(dev.device, &ci, nullptr, &tmp) != VK_SUCCESS) {
++        const size_t bytes = part.size();
++        if (!pipeline_cache_import_allowed(path, bytes)) continue;
++        const VkResult created = vkCreatePipelineCache(dev.device, &ci, nullptr, &tmp);
++        part = {};
++        if (created != VK_SUCCESS) {
++            logf("vk: play pipeline cache import failed: VkResult=%d; existing cache retained: %s", (int)created, path.c_str());
+             continue;
+         }
+-        if (vkMergePipelineCaches(dev.device, pcache, 1, &tmp) == VK_SUCCESS) merged.push_back(path), merged_kb += part.size() >> 10;
++        const VkResult merged_result = vkMergePipelineCaches(dev.device, pcache, 1, &tmp);
+         vkDestroyPipelineCache(dev.device, tmp, nullptr);
++        if (merged_result == VK_SUCCESS) {
++            merged.push_back(path);
++            merged_kb += bytes >> 10;
++        } else {
++            logf("vk: play pipeline cache merge failed: VkResult=%d; existing cache retained: %s", (int)merged_result, path.c_str());
++        }
+     }
+     if (!merged.empty()) logf("vk: pipeline cache: %zu play files merged (%zu KB)", merged.size(), merged_kb);
+     if (merged.size() >= kPlayFilesKept) {   // (into the one file, here at the start, and out of the play files)
+@@ -1065,20 +1093,10 @@ void pcache_init() {
+     pcache_no_save = off;
+     pcache_drop_stale();   // (before the files are read)
+     auto data = off ? PipelineCacheFile{} : pcache_file_read(pcache_path);
+-#ifdef _WIN32
+-    if (!data.empty()) {
+-        MEMORYSTATUSEX status{};
+-        status.dwLength = sizeof status;
+-        const bool measured = GlobalMemoryStatusEx(&status) && status.ullTotalPageFile &&
+-                              status.ullAvailPageFile <= status.ullTotalPageFile;
+-        if (!measured || !pipeline_cache_fits_commit(data.size(), status.ullAvailPageFile)) {
+-            logf("vk: pipeline cache retained on disk: %zu bytes, available commit %llu bytes (measurement valid=%d)",
+-                 data.size(), (unsigned long long)status.ullAvailPageFile, (int)measured);
+-            pcache_no_save = true;
+-            data = {};
+-        }
++    if (!data.empty() && !pipeline_cache_import_allowed(pcache_path, data.size())) {
++        pcache_no_save = true;
++        data = {};
+     }
+-#endif
+     VkPipelineCacheCreateInfo ci{VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO};
+     ci.initialDataSize = data.size();
+     ci.pInitialData = data.empty() ? nullptr : data.data();
