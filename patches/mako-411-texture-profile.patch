@@ -1,0 +1,109 @@
+diff --git a/gpu/vk/vk_draw.cpp b/gpu/vk/vk_draw.cpp
+--- a/gpu/vk/vk_draw.cpp
++++ b/gpu/vk/vk_draw.cpp
+@@ -168,7 +168,9 @@
+ #define FINE_N(c, n) do { if (g_fine) fine_n[c] += (n); } while (0)
+ #define FINE_X(c, n) (g_fine ? (void)(fine_n[c] += (n)) : (void)0)   // (the same, as an expression)
+ /// The sums since the last report, as a frame's times and a draw's counts (the caller: every 120 frames)
++void texture_detail_report(double frames);
+ void fine_report(double frames) {
++    texture_detail_report(frames);
+     if (!g_fine) return;
+     static int64_t last_ns[FT_COUNT], last_n[FC_COUNT];
+     char line[900];
+@@ -189,6 +191,43 @@
+     }
+     logf("%s", line);
+     for (int i = 0; i < FC_COUNT; i++) last_n[i] = fine_n[i];
++}
++
++// Samples one call in 16 per bucket and reports only the calling replay thread.
++enum TextureDetail { TD_VIEW, TD_PREPARE, TD_SAMPLER, TD_HAZARD, TD_COUNT };
++const bool texture_detail_on = env_on("RX_VK_TEXTURE_PROFILE");
++struct TextureDetailStats {
++    uint64_t calls = 0, samples = 0;
++    int64_t ns = 0;
++};
++thread_local std::array<TextureDetailStats, TD_COUNT> texture_detail;
++struct TextureDetailScope {
++    TextureDetailStats* stats = nullptr;
++    int64_t start = 0;
++    explicit TextureDetailScope(TextureDetail detail) {
++        if (!texture_detail_on) return;
++        auto& bucket = texture_detail[detail];
++        if ((bucket.calls++ & 15) != 0) return;
++        stats = &bucket;
++        start = prof_now();
++    }
++    ~TextureDetailScope() {
++        if (!stats) return;
++        stats->ns += prof_now() - start;
++        ++stats->samples;
++    }
++};
++void texture_detail_report(double frames) {
++    if (!texture_detail_on || frames <= 0) return;
++    static constexpr const char* names[] = {"view inclusive", "texture preparation within view",
++                                             "sampler", "hazards+pass"};
++    for (int i = 0; i < TD_COUNT; ++i) {
++        auto& b = texture_detail[i];
++        const double mean = b.samples ? (double)b.ns / (double)b.samples : 0;
++        logf("vk: texture CPU sample: %s %.3f ms/frame, %llu calls, %llu samples",
++             names[i], mean * (double)b.calls / frames / 1e6, (unsigned long long)b.calls, (unsigned long long)b.samples);
++        b = {};
++    }
+ }
+ 
+ bool no_a2c() {   // (RX_VK_NO_A2C, read once: it was a getenv on every alpha-to-coverage draw, the foliage's)
+@@ -2969,6 +3008,7 @@
+ // sampler_make; =1 or the Sampler cache row turns the parameters' cache on (this table stays on, as it is without the option)
+ bool sampler_cache_on();   // (hookshot, RX_VK_SAMPLER_CACHE and the Sampler cache row: defined below with the descriptor fingerprint's)
+ VkSampler sampler_for(int id, bool compare) {
++    TextureDetailScope profile(TD_SAMPLER);
+     static const bool on = !getenv("RX_VK_SAMPLER_CACHE") || atoi(getenv("RX_VK_SAMPLER_CACHE")) != 0;
+     if (!on || id < 0 || id >= 4096) return sampler_make(id, compare);
+     struct Entry { uint64_t gen; VkSampler s; };
+@@ -3246,6 +3286,7 @@
+ 
+ VkImageView texture_view_of(uint32_t handle, VkImageViewType want, ViewUse use, VkFormat storage_as = VK_FORMAT_UNDEFINED,
+                             Texture** tex_out = nullptr, uint32_t* level_out = nullptr) {
++    TextureDetailScope profile(TD_VIEW);
+     const uint32_t version = texture_slot_version((int)(handle & 0xFFFFF));
+     const uint64_t dgen = texture_destroy_generation();
+     const uint64_t key = (uint64_t)(handle & 0xFFFFF) | (uint64_t)want << 20 | (uint64_t)use << 28 | (uint64_t)storage_as << 32;
+@@ -3263,6 +3304,7 @@
+     }
+     if (it != handle_hits().end() && it->second.version == version && it->second.destroy_gen == dgen) {
+         if (it->second.tex && it->second.tex_epoch != texture_epoch()) {   // (once a submission: its age and contents)
++            TextureDetailScope prepare(TD_PREPARE);
+             if (!texture_touch_quick(it->second.tex, it->second.sampling)) {
+                 ParLock lk;
+                 texture_touch(it->second.tex, it->second.sampling);
+@@ -3282,7 +3324,10 @@
+     uint32_t level = 0;
+     const bool known = texture_of((int)(handle & 0xFFFFF), &t, &v, &has_view);
+     if (known) {
+-        tex = texture_get(&t, use == ViewUse::Sample || use == ViewUse::Storage);
++        {
++            TextureDetailScope prepare(TD_PREPARE);
++            tex = texture_get(&t, use == ViewUse::Sample || use == ViewUse::Storage);
++        }
+         if (tex) view = texture_view(tex, &t, has_view ? &v : nullptr, want, use, &last_view_format, storage_as);
+         if (tex) level = image_level(tex, has_view ? view_level(&v) : 0);
+     }
+@@ -7649,6 +7694,7 @@
+     uint16_t writes;
+     {
+         FINE_SCOPE(FT_HAZARD);
++        TextureDetailScope profile(TD_HAZARD);
+         writes = draw_hazards(cmd, p, s, at);
+     }
+     BufferRef mesh_args{};
+@@ -7725,6 +7771,7 @@
+     if (fallback_role == FallbackRole::Colour) fallback_list_hold(d.indirect, false);
+     {
+         FINE_SCOPE(FT_HAZARD);
++        TextureDetailScope profile(TD_HAZARD);
+         begin_pass(cmd, at);
+     }
+     probe_draw(s, p, ps.draws);   // (hookshot: RX_VK_PROBE)
