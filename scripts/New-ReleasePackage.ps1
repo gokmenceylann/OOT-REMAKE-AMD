@@ -30,7 +30,8 @@ try {
     $files = @(
         'README.md', 'README.tr.md', 'LICENSE', 'THIRD-PARTY.md',
         'CHANGELOG.md', 'docs/install.md', 'docs/mako-build.md', 'docs/fsr-4.1.2.md',
-        'docs/fsr-context-recovery.md', 'docs/known-issues.md', 'docs/troubleshooting.md',
+        'docs/fsr-context-recovery.md', 'docs/KNOWN_ISSUES.md', 'docs/known-issues-history.md', 'docs/troubleshooting.md',
+        'docs/PROJECT_STATUS.md', 'docs/ARCHITECTURE.md', 'docs/BUILDING.md', 'docs/GPU_COMPATIBILITY.md', 'docs/TESTING.md',
         'docs/memory-telemetry.md', 'docs/vulkan-memory.md', 'docs/validation-rx6700m.md',
         'docs/release.md', 'CONTRIBUTING.md', 'scripts/Test-LocalGame.ps1', 'scripts/Import-LocalGame.ps1', 'scripts/Measure-FrameTimes.ps1', 'scripts/Capture-VulkanSession.ps1', 'docs/fsr-profiling.md', 'docs/amd-compatibility.md', 'upstream/mako/LICENSE'
     )

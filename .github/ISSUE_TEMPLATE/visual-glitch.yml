@@ -1,0 +1,24 @@
+name: "Visual glitch report"
+description: "Report rendering artifacts or missing geometry"
+body:
+  - type: textarea
+    id: field-1
+    attributes:
+      label: "Settings"
+      description: "Build, GPU, driver, area, resolution, FSR and FG."
+    validations:
+      required: true
+  - type: textarea
+    id: field-2
+    attributes:
+      label: "Reproduction and evidence"
+      description: "Camera movement, scene change or visit number, expected image, redacted logs and optional screenshots."
+    validations:
+      required: true
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: Attachments
+      options:
+        - label: My attachments exclude game data, keys, personal paths, saves and SDK binaries.
+          required: true

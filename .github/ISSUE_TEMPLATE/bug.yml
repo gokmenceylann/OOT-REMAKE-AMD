@@ -1,0 +1,38 @@
+name: "Bug report"
+description: "Report a reproducible crash or malfunction"
+body:
+  - type: textarea
+    id: field-1
+    attributes:
+      label: "System and build"
+      description: "GPU, exact driver, CPU, RAM, Windows build and release or commit."
+    validations:
+      required: true
+  - type: textarea
+    id: field-2
+    attributes:
+      label: "Graphics and metrics"
+      description: "Vulkan renderer, render and output resolution, FSR provider, FG, FPS and VRAM."
+    validations:
+      required: true
+  - type: textarea
+    id: field-3
+    attributes:
+      label: "Reproduction"
+      description: "List the steps and expected versus observed behavior."
+    validations:
+      required: true
+  - type: textarea
+    id: field-4
+    attributes:
+      label: "Logs"
+      description: "Share a redacted excerpt and the first error code."
+    validations:
+      required: true
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: Attachments
+      options:
+        - label: My attachments exclude game data, keys, personal paths, saves and SDK binaries.
+          required: true
