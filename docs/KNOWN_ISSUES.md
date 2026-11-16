@@ -1,5 +1,7 @@
 # Known issues
 
+The reports preserve the observed symptoms and test conditions. A fix for the Castle Town frame-time spikes, Windows commit pressure or missing draws during transitions has yet to be validated. Share reproductions, findings and measured patches in the [open findings issue](https://github.com/gokmenceylann/OOT-REMAKE-AMD/issues/5).
+
 | Issue | Current evidence |
 | --- | --- |
 | Windows system commit pressure | rc.4 observed high private commit and small system headroom. VMMap classified part of the growth as host-side anonymous private memory. The allocation owner remains unresolved. |

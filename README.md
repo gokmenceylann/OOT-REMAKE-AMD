@@ -2,6 +2,8 @@
 
 An open-source Windows x64 project for locally building and testing a Zelda: Ocarina of Time PC port with Mako 4.1.1, Vulkan and AMD FidelityFX Super Resolution. The project maintains renderer patches, reproducible build instructions and hardware test reports. Run the locally built `hookshot.exe` directly.
 
+The published results document partial validation on the Radeon RX 6700M. Castle Town stutter, Windows commit pressure and missing draws during area transitions remain unresolved. Reproductions and measured fixes are welcome. [Open findings and contribution track](https://github.com/gokmenceylann/OOT-REMAKE-AMD/issues/5)
+
 [Stable v0.1.6](https://github.com/gokmenceylann/OOT-REMAKE-AMD/releases/tag/v0.1.6) · [Diagnostics v0.2.0-rc.4](https://github.com/gokmenceylann/OOT-REMAKE-AMD/releases/tag/v0.2.0-rc.4) · [Downloads and requirements](docs/DOWNLOADS.md) · [Build from source](docs/BUILDING.md) · [Türkçe](README.tr.md)
 
 ## Project scope and upstream

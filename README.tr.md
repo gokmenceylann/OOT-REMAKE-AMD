@@ -2,6 +2,8 @@
 
 Hookshot tabanlı Mako 4.1.1 üzerine kurulu Windows 11 x64 Ocarina of Time recomp projesi. AArch64 statik yeniden derleme, Horizon servisleri ve NVN2 → Vulkan çizimi kullanır. Oyun doğrudan `hookshot.exe` ile açılır.
 
+Yayımlanan raporlar Radeon RX 6700M üzerinde yapılan kısmi doğrulamayı kayda geçiriyor. Castle Town takılmaları, Windows bellek taahhüdü baskısı ve bölge geçişlerindeki eksik çizimler için doğrulanmış bir çözüm henüz yok. Sorunu yeniden üreten testler ve ölçümle doğrulanan düzeltmeler katkıya açık. [Açık bulgular ve katkı takibi](https://github.com/gokmenceylann/OOT-REMAKE-AMD/issues/5)
+
 [Kararlı v0.1.6](https://github.com/gokmenceylann/OOT-REMAKE-AMD/releases/tag/v0.1.6) · [Deneysel v0.2.0-rc.4](https://github.com/gokmenceylann/OOT-REMAKE-AMD/releases/tag/v0.2.0-rc.4) · [İndirmeler ve sürüme özel kurulum](docs/DOWNLOADS.md) · [English](README.md)
 
 ## Hangi sürüm?
