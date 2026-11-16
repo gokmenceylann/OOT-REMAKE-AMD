@@ -1,6 +1,6 @@
-# OOT-REMAKE-AMD | Zelda: Ocarina of Time recomp on Windows
+# OOT-REMAKE-AMD | Zelda: Ocarina of Time Recompiled
 
-OOT-REMAKE-AMD is an open-source project for building and testing a local recompilation of the Zelda: Ocarina of Time Switch 2 remake on Windows 11 x64. It uses Mako 4.1.1, Vulkan and AMD FSR 4.1.2. The published performance tests record real FSR 4.1.2 Vulkan dispatch on a Radeon RX 6700M. Other AMD GPU models, NVIDIA GPUs and Intel GPUs remain unverified.
+OOT-REMAKE-AMD is an open-source project for building and testing Zelda: Ocarina of Time Recompiled (OOTR) locally on Windows 11 x64. It uses Mako 4.1.1, Vulkan and AMD FSR 4.1.2. Published logs record FSR 4.1.2 Vulkan dispatch on a Radeon RX 6700M. Other AMD models, NVIDIA GPUs and Intel GPUs remain unverified.
 
 The published results document partial validation on the Radeon RX 6700M. Castle Town stutter, Windows commit pressure and missing draws during area transitions remain unresolved. Reproductions and measured fixes are welcome. [Open findings and contribution track](https://github.com/gokmenceylann/OOT-REMAKE-AMD/issues/5)
 
