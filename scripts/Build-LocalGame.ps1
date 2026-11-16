@@ -15,7 +15,7 @@ $ErrorActionPreference = 'Stop'
 $repo = Split-Path $PSScriptRoot
 $source = Join-Path $repo 'upstream/mako'
 $expected = 'b77ac86187330eb7447ac65ab23187baac4600ca'
-$patches = @()
+$patches = @(Join-Path $repo 'patches/mako-411-pipeline-queue.patch')
 if ($EnableFsr412) { $patches += Join-Path $repo 'patches/fsr-4.1.2.patch' }
 if ($EnableMemoryOptimization) { $patches += Join-Path $repo 'patches/rx6700m-memory.patch' }
 $builder = Join-Path $source 'nx2/make_game.py'
@@ -54,7 +54,7 @@ try {
         git -C $source apply --ignore-whitespace --reverse --check $patch 2>$null
         if ($LASTEXITCODE -ne 0) {
             git -C $source apply --ignore-whitespace --check $patch
-            if ($LASTEXITCODE -ne 0) { throw 'Cannot apply --ignore-whitespace the FSR patch to this checkout.' }
+            if ($LASTEXITCODE -ne 0) { throw "Cannot apply patch to this checkout: $patch" }
             git -C $source apply --ignore-whitespace $patch
             if ($LASTEXITCODE -ne 0) { throw 'Patch failed: $patch' }
         }

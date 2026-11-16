@@ -1,0 +1,85 @@
+diff --git a/gpu/vk/vk_jobs.cpp b/gpu/vk/vk_jobs.cpp
+index a943022c..f94a882d 100644
+--- a/gpu/vk/vk_jobs.cpp
++++ b/gpu/vk/vk_jobs.cpp
+@@ -195,11 +195,9 @@ bool jobs_hurry(const std::atomic<bool>& flag) {
+     if (flag.load(std::memory_order_acquire)) return false;
+     for (auto it = queue.begin(); it != queue.end(); ++it)
+         if (it->flag == &flag) {
+-            if (it != queue.begin()) {
+-                Entry e = std::move(*it);
+-                queue.erase(it);
+-                queue.push_front(std::move(e));
+-            }
++            // Rotate existing entries: allocating a new deque slot after erasing the job
++            // could lose its completion callback and strand waiters if the allocation fails.
++            std::rotate(queue.begin(), it, it + 1);
+             return true;
+         }
+     return false;
+diff --git a/tests/test_jobs_wait_runs_queued.cpp b/tests/test_jobs_wait_runs_queued.cpp
+index 8fb840d6..c608829b 100644
+--- a/tests/test_jobs_wait_runs_queued.cpp
++++ b/tests/test_jobs_wait_runs_queued.cpp
+@@ -10,11 +10,22 @@
+ #include <cstdlib>
+ #include <cstring>
+ #include <mutex>
++#include <new>
+ #include <thread>
+ #include <vector>
+ 
+ using namespace mkwvk;
+ 
++static thread_local bool count_allocations = false;
++static thread_local unsigned allocations = 0;
++void* operator new(std::size_t size) {
++    if (count_allocations) ++allocations;
++    if (void* ptr = std::malloc(size ? size : 1)) return ptr;
++    throw std::bad_alloc();
++}
++void operator delete(void* ptr) noexcept { std::free(ptr); }
++void operator delete(void* ptr, std::size_t) noexcept { std::free(ptr); }
++
+ namespace {
+ 
+ int failures = 0;
+@@ -129,6 +140,17 @@ void hurry() {
+     jobs_push([&] { a_at = order++; a_done.store(true); jobs_notify(); }, false, &a_done);
+     jobs_push([&] { b_runs++; b_on = std::this_thread::get_id(); b_at = order++; b_done.store(true); jobs_notify(); }, false, &b_done);
+     expect(jobs_hurry(b_done), "the queued job is found");
++    // Keep the worker busy while moving the last item repeatedly. On a deque,
++    // the old erase + push_front path must eventually allocate another block.
++    constexpr unsigned count = 256;
++    std::vector<std::atomic<bool>> done(count);
++    for (auto& flag : done) jobs_push([&flag] { flag.store(true); }, false, &flag);
++    bool all_found = true;
++    count_allocations = true;
++    for (unsigned i = count; i > 0; --i) all_found &= jobs_hurry(done[i - 1]);
++    count_allocations = false;
++    expect(all_found, "all queued completion flags survive promotion");
++    expect(allocations == 0, "promoting an existing job allocates no memory");
+     std::atomic<bool> never{false};
+     expect(!jobs_hurry(never), "a flag with no queued job is not found");
+     release();
+@@ -139,6 +161,7 @@ void hurry() {
+     expect(!jobs_hurry(b_done), "a done job is not hurried");
+     for (unsigned i = 0; i < kHolds; i++) jobs_wait(holds_done[i]);
+     expect(drained(), "nothing is left in the queue");
++    for (const auto& flag : done) expect(flag.load(), "promoted job ran");
+ }
+ 
+ } // namespace
+diff --git a/tests/test_jobs_wait_runs_queued.py b/tests/test_jobs_wait_runs_queued.py
+index fe1858ea..b9bad64c 100644
+--- a/tests/test_jobs_wait_runs_queued.py
++++ b/tests/test_jobs_wait_runs_queued.py
+@@ -73,7 +73,7 @@ def main():
+             shutil.copy(ROOT / "gpu/vk" / name, tmp / name)
+         (tmp / "vk_internal.h").write_text(STUB_INTERNAL, encoding="utf-8")
+         (tmp / "vk_draw.h").write_text(STUB_DRAW, encoding="utf-8")
+-        exe = tmp / "jobs-wait"
++        exe = tmp / "jobs-wait.exe"
+         subprocess.run([args.cxx, "-std=c++20", "-Wall", "-Wextra", "-pthread", "-I", str(tmp),
+                         "-I", str(ROOT / "gpu/vk/compat"),
+                         str(tmp / "vk_jobs.cpp"), str(ROOT / "tests/test_jobs_wait_runs_queued.cpp"), "-o", str(exe)],
