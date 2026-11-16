@@ -35,4 +35,4 @@ Use [CONTRIBUTING.md](CONTRIBUTING.md) to choose a branch, validate your changes
 
 ## License and related projects
 
-See [GPLv3 license text](LICENSE), [third-party notices](THIRD-PARTY.md) and [source provenance](docs/ARCHITECTURE.md). [Mako](https://github.com/Shakoquo/Mako), [Hookshot](https://github.com/NotRexed/Hookshot) and [AMD GPUOpen FSR](https://gpuopen.com/amd-fsr-sdk/) document the corresponding upstream work. Nintendo game content, keys and game-derived binaries remain local to the user.
+See [GPLv3 license text](LICENSE), [third-party notices](THIRD-PARTY.md) and [source provenance](docs/ARCHITECTURE.md). [Mako](https://github.com/Shakoquo/Mako), [Hookshot](https://git.magicbean.dev/MagicBeanDev/Hookshot) and [AMD GPUOpen FSR](https://gpuopen.com/amd-fsr-sdk/) document the corresponding upstream work. Nintendo game content, keys and game-derived binaries remain local to the user.
