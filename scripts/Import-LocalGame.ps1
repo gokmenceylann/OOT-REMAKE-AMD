@@ -15,7 +15,7 @@ trap {
 $source = (Resolve-Path -LiteralPath $GameDirectory).Path
 $required = 'hookshot.exe', 'hookshot_vk.dll', 'image.bin'
 $optional = 'hookshot_shaders.bin', 'hookshot_pipeline_states_shipped.bin', 'hookshot_version.txt',
-            'SDL2.dll', 'SDL3.dll', 'libwinpthread-1.dll'
+            'SDL2.dll', 'SDL3.dll', 'libwinpthread-1.dll', 'language.txt'
 foreach ($name in $required) {
     $file = Get-Item -LiteralPath (Join-Path $source $name) -ErrorAction SilentlyContinue
     if (!$file -or $file.PSIsContainer -or !$file.Length) { throw "Missing $name. Select a complete local Hookshot build." }
@@ -57,7 +57,7 @@ if ($RuntimeManifest) {
             $algorithm.Dispose()
         }
         if (!$expected.ContainsKey($name) -or $hash -ne $expected[$name]) {
-            throw "$name does not match the verified Mako 4.1.1 baseline. Select the original local v0.1.5 build."
+            throw "$name does not match the verified Mako 4.1.1 baseline. Select the matching local build documented for this package."
         }
     }
 }
@@ -76,6 +76,14 @@ if ($dest -eq $source -or $dest.StartsWith($source + '\', 'OrdinalIgnoreCase') -
     $source.StartsWith($dest + '\', 'OrdinalIgnoreCase')) { throw 'Select a separate destination outside the source game folder.' }
 if ((Test-Path -LiteralPath (Join-Path $dest 'hookshot.exe')) -or (Test-Path -LiteralPath (Join-Path $dest 'romfs'))) {
     throw 'Choose a new game destination. Move an existing installation separately.'
+}
+$packageVersion = Join-Path (Split-Path $PSScriptRoot) 'VERSION.txt'
+if ((Test-Path -LiteralPath $packageVersion -PathType Leaf) -and
+    (Get-Content -LiteralPath $packageVersion -Raw).Trim() -in 'v0.1.6', 'v0.2.0-rc.4') {
+    $fsr = 'amd_fidelityfx_loader_vk.dll', 'amd_fidelityfx_upscaler_vk.dll'
+    if (@($fsr | Where-Object { Test-Path -LiteralPath (Join-Path $source $_) -PathType Leaf }).Count -eq 2) {
+        $optional += $fsr
+    }
 }
 [void][IO.Directory]::CreateDirectory($dest)
 $romOut = Join-Path $dest 'romfs'

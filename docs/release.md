@@ -18,6 +18,11 @@ Before tagging, update [CHANGELOG.md](../CHANGELOG.md). Review the [release temp
 
 ## Windows game import preview
 
+The `game-import-preview` job runs only when someone starts the workflow
+manually with `workflow_dispatch`. On pull requests, the `package` job
+compiles the v0.1.6 and v0.2.0-rc.4 game import installers and checks the
+ZIP contents and SHA-256 manifests without publishing them.
+
 Build the approval candidate by adding `-GameImport` and an Inno compiler
 path to the packaging command. Keep the generated installer, ZIP and SHA-256
 manifest in a separate test directory. Confirm the import, direct EXE launch,
@@ -35,4 +40,19 @@ are separate approval steps.
 
 [v0.1.6](DOWNLOADS.md) is the stable importer. v0.2.0-rc.4 is the experimental diagnostics importer. Each package verifies the local EXE and Vulkan DLL against its own SHA-256 manifest. Downloads contain the importer and documentation. Supply the matching local binaries and your own game data.
 
-Use the source checkout at the release tag to inspect its packaging rules. A locally rebuilt pair may have different hashes and can be launched directly from its output folder. The default branch's tools workflow and historical import preview are separate packaging paths.
+The packaging script selects the version's manifest automatically when you
+pass `-GameImport` with either published version. For example, to build and
+check the stable installer in a separate directory, run:
+
+```powershell
+$version = 'v0.1.6'
+$compiler = 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe'
+$out = "D:\OOT-import-$version"
+.\scripts\New-ReleasePackage.ps1 -Version $version -OutputDirectory $out -InnoCompiler $compiler -GameImport
+.\scripts\Test-ReleasePackage.ps1 -PackageDirectory $out -ExpectedRuntimeManifest "installer/$version-runtime-sha256.txt"
+```
+
+Set `$version` to `v0.2.0-rc.4` to check the diagnostics importer. The
+manifest hashes come from the respective release source commits. A locally
+rebuilt pair may have different hashes and can be launched directly from its
+output folder.

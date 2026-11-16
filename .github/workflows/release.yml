@@ -5,7 +5,7 @@ on:
       import_preview_version:
         description: Game import preview (vMAJOR.MINOR.PATCH-rc.N)
         required: true
-        default: v0.2.0-rc.1
+        default: v0.2.0-rc.4
   pull_request:
   push:
     tags: ['v*', '!v*-rc.*']
@@ -46,6 +46,16 @@ jobs:
           if ($process.ExitCode -or (Test-Path "$target/docs/install.md") -or
               (Get-Content "$target/user/save/sentinel") -ne 'save' -or
               (Get-Content "$target/hookshot_options.ini") -ne 'settings') { throw 'Uninstall preservation failed.' }
+      - name: Verify stable and diagnostics game import installers
+        if: github.event_name == 'pull_request'
+        shell: pwsh
+        run: |
+          $compiler = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6/ISCC.exe'
+          foreach ($version in 'v0.1.6', 'v0.2.0-rc.4') {
+            $out = Join-Path $env:RUNNER_TEMP "game-import-$version"
+            ./scripts/New-ReleasePackage.ps1 -Version $version -OutputDirectory $out -InnoCompiler $compiler -GameImport
+            ./scripts/Test-ReleasePackage.ps1 -PackageDirectory $out -ExpectedRuntimeManifest "installer/$version-runtime-sha256.txt"
+          }
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: windows-tools
@@ -90,7 +100,11 @@ jobs:
           if ($env:PREVIEW_VERSION -notmatch '\Av\d+\.\d+\.\d+-rc\.[1-9]\d*\z') { throw 'Use a release candidate version.' }
           $compiler = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6/ISCC.exe'
           ./scripts/New-ReleasePackage.ps1 -Version $env:PREVIEW_VERSION -OutputDirectory preview -InnoCompiler $compiler -GameImport
-          ./scripts/Test-ReleasePackage.ps1 -PackageDirectory preview
+          if ($env:PREVIEW_VERSION -eq 'v0.2.0-rc.4') {
+            ./scripts/Test-ReleasePackage.ps1 -PackageDirectory preview -ExpectedRuntimeManifest "installer/$env:PREVIEW_VERSION-runtime-sha256.txt"
+          } else {
+            ./scripts/Test-ReleasePackage.ps1 -PackageDirectory preview
+          }
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: windows-game-import-preview
