@@ -59,11 +59,13 @@ jobs:
         shell: pwsh
         working-directory: upstream/mako
         run: |
-          git apply --ignore-whitespace ../../patches/mako-411-regression-fixture.patch
+          git apply --ignore-whitespace ../../patches/mako-411-regression-fixture.patch ../../patches/mako-411-quick-pipeline-test.patch
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           $cxx = Join-Path $env:HOOKSHOT_MINGW 'bin/x86_64-w64-mingw32-clang++.exe'
           $headers = Join-Path $env:GITHUB_WORKSPACE '_deps/cpm/vulkanheaders/v1.4.345/include'
           python -I -B ../../tests/test_mako_startup_policy.py --source . --cxx $cxx
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          python -I -B tests/test_quick_pipelines.py --cxx $cxx
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           python -I -B tests/test_jobs_wait_runs_queued.py --cxx $cxx
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
