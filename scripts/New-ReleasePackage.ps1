@@ -8,8 +8,8 @@ param(
     [switch]$StableImport
 )
 $ErrorActionPreference = 'Stop'
-if ($StableImport -and (!$GameImport -or $Version -notin 'v0.1.5', 'v0.1.6', 'v0.2.0-rc.3')) {
-    throw 'The verified baseline importer is available for v0.1.5, v0.1.6 and v0.2.0-rc.3.'
+if ($StableImport -and (!$GameImport -or $Version -notin 'v0.1.5', 'v0.1.6', 'v0.2.0-rc.3', 'v0.2.0-rc.4')) {
+    throw 'The verified baseline importer is available for v0.1.5, v0.1.6, v0.2.0-rc.3 and v0.2.0-rc.4.'
 }
 $repo = Split-Path $PSScriptRoot
 $out = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($OutputDirectory)
@@ -50,7 +50,7 @@ try {
         }
     }
     if ($StableImport) {
-        $runtimeTag = if ($Version -eq 'v0.1.6') { $Version } else { 'v0.1.5' }
+        $runtimeTag = if ($Version -in 'v0.1.6', 'v0.2.0-rc.4') { $Version } else { 'v0.1.5' }
         Copy-Item -LiteralPath (Join-Path $repo "installer/$runtimeTag-runtime-sha256.txt") -Destination (Join-Path $payload 'STABLE-RUNTIME-SHA256.txt')
     }
     if ($StableImport -and $Version -eq 'v0.1.6') {
@@ -58,6 +58,13 @@ try {
             Copy-Item -LiteralPath (Join-Path $repo $relative) -Destination (Join-Path $payload $relative)
         }
     }
+    if ($StableImport -and $Version -eq 'v0.2.0-rc.4') {
+        foreach ($relative in 'docs/install-v0.2.0-rc.4.md', 'docs/mako-411-memory-owner-and-texture-profile.md',
+                              'docs/UPSTREAM-PROVENANCE.md', 'docs/THIRD-PARTY-COMPONENTS.md') {
+            Copy-Item -LiteralPath (Join-Path $repo $relative) -Destination (Join-Path $payload $relative)
+        }
+    }
+
     Set-Content -LiteralPath (Join-Path $payload 'VERSION.txt') -Value $Version -Encoding ASCII
     $archive = Join-Path $stage "$base.zip"
     Compress-Archive -Path (Join-Path $payload '*') -DestinationPath $archive

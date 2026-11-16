@@ -1,5 +1,7 @@
 [Setup]
-#if PackageVersion == "0.2.0-rc.3"
+#if PackageVersion == "0.2.0-rc.4"
+AppId=OOT-REMAKE-AMD-Texture-Diagnostics
+#elif PackageVersion == "0.2.0-rc.3"
 AppId=OOT-REMAKE-AMD-Baseline-Research
 #elif defined(StableRuntimeManifest)
 AppId=OOT-REMAKE-AMD-Stable-GameImport
@@ -38,7 +40,7 @@ Source: "{code:SourceGame}\SDL3.dll"; DestDir: "{app}"; Flags: external skipifso
 Source: "{code:SourceGame}\libwinpthread-1.dll"; DestDir: "{app}"; Flags: external skipifsourcedoesntexist
 
 Source: "{code:SourceGame}\language.txt"; DestDir: "{app}"; Flags: external skipifsourcedoesntexist
-#if PackageVersion == "0.1.6"
+#if PackageVersion == "0.1.6" || PackageVersion == "0.2.0-rc.4"
 Source: "{code:SourceGame}\amd_fidelityfx_loader_vk.dll"; DestDir: "{app}"; Flags: external skipifsourcedoesntexist; Check: HasLocalFsrPair
 Source: "{code:SourceGame}\amd_fidelityfx_upscaler_vk.dll"; DestDir: "{app}"; Flags: external skipifsourcedoesntexist; Check: HasLocalFsrPair
 #endif
@@ -68,7 +70,7 @@ begin
   Result := RemoveBackslashUnlessRoot(Trim(GamePage.Values[0]));
 end;
 
-#if PackageVersion == "0.1.6"
+#if PackageVersion == "0.1.6" || PackageVersion == "0.2.0-rc.4"
 function HasLocalFsrPair: Boolean;
 var
   Dir: String;

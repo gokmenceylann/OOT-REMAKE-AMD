@@ -2,8 +2,8 @@ name: Windows tools release
 on:
   pull_request:
   push:
-    # v0.1.6 uses the locally validated exact-runtime importer assets.
-    tags: ['v*', '!v0.1.6']
+    # These releases use locally validated exact-runtime importer assets.
+    tags: ['v*', '!v0.1.6', '!v0.2.0-rc.4']
 
 permissions:
   contents: read

@@ -79,7 +79,7 @@ if ((Test-Path -LiteralPath (Join-Path $dest 'hookshot.exe')) -or (Test-Path -Li
 }
 $packageVersion = Join-Path (Split-Path $PSScriptRoot) 'VERSION.txt'
 if ((Test-Path -LiteralPath $packageVersion -PathType Leaf) -and
-    (Get-Content -LiteralPath $packageVersion -Raw).Trim() -eq 'v0.1.6') {
+    (Get-Content -LiteralPath $packageVersion -Raw).Trim() -in 'v0.1.6', 'v0.2.0-rc.4') {
     $fsr = 'amd_fidelityfx_loader_vk.dll', 'amd_fidelityfx_upscaler_vk.dll'
     if (@($fsr | Where-Object { Test-Path -LiteralPath (Join-Path $source $_) -PathType Leaf }).Count -eq 2) {
         $optional += $fsr
