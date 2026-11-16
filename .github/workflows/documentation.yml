@@ -1,0 +1,26 @@
+name: Documentation
+
+on:
+  pull_request:
+  push:
+    branches: [main, 'docs/**']
+
+permissions:
+  contents: read
+
+jobs:
+  documentation:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
+        with:
+          python-version: '3.12'
+      - name: Check community files and Markdown links
+        run: python -I -B scripts/check_docs.py
+      - name: Validate issue forms
+        run: |
+          npm install --prefix "$RUNNER_TEMP/docs-check-tools" --ignore-scripts --no-audit --no-fund yaml@2.9.1
+          node scripts/check_issue_forms.cjs "$RUNNER_TEMP/docs-check-tools"

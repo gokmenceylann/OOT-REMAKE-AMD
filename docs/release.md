@@ -18,6 +18,11 @@ Before tagging, update [CHANGELOG.md](../CHANGELOG.md). Review the [release temp
 
 ## Windows game import preview
 
+The `game-import-preview` job runs only when someone starts the workflow
+manually with `workflow_dispatch`. On pull requests, the `package` job
+compiles the v0.1.6 and v0.2.0-rc.4 game import installers and checks the
+ZIP contents and SHA-256 manifests without publishing them.
+
 Build the approval candidate by adding `-GameImport` and an Inno compiler
 path to the packaging command. Keep the generated installer, ZIP and SHA-256
 manifest in a separate test directory. Confirm the import, direct EXE launch,
@@ -31,17 +36,23 @@ the game stores cache alongside the executable. The preview has its own app
 identity. Publishing a stable release and updating an existing local game
 are separate approval steps.
 
-## v0.1.5 stable local import
+## Published exact-runtime importers
 
-Use the v0.1.5 game-import setup or portable ZIP to install an existing
-copy of the original Mako 4.1.1 build into a separate directory. The
-package verifies the exact EXE and Vulkan DLL with
-`STABLE-RUNTIME-SHA256.txt`. An arbitrary rebuild or newer prerelease
-will fail this check. The package does not distribute those binaries,
-game data or AMD SDK DLLs. The tools-only installer remains available
-for building from source and for users without the original binaries.
+[v0.1.6](DOWNLOADS.md) is the stable importer. v0.2.0-rc.4 is the experimental diagnostics importer. Each package verifies the local EXE and Vulkan DLL against its own SHA-256 manifest. Downloads contain the importer and documentation. Supply the matching local binaries and your own game data.
 
-Setup installs the validated local files and can create a shortcut to
-`hookshot.exe`. Setup and uninstall preserve save and options files.
-For the portable ZIP, use `scripts/Import-LocalGame.ps1 -GameDirectory
-<local-build> -Destination <new-directory>`.
+The packaging script selects the version's manifest automatically when you
+pass `-GameImport` with either published version. For example, to build and
+check the stable installer in a separate directory, run:
+
+```powershell
+$version = 'v0.1.6'
+$compiler = 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe'
+$out = "D:\OOT-import-$version"
+.\scripts\New-ReleasePackage.ps1 -Version $version -OutputDirectory $out -InnoCompiler $compiler -GameImport
+.\scripts\Test-ReleasePackage.ps1 -PackageDirectory $out -ExpectedRuntimeManifest "installer/$version-runtime-sha256.txt"
+```
+
+Set `$version` to `v0.2.0-rc.4` to check the diagnostics importer. The
+manifest hashes come from the respective release source commits. A locally
+rebuilt pair may have different hashes and can be launched directly from its
+output folder.

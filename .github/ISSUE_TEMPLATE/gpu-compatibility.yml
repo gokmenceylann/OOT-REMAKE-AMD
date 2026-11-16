@@ -1,0 +1,36 @@
+name: "GPU compatibility report"
+description: "Share results from a specific GPU and driver"
+body:
+  - type: textarea
+    id: field-1
+    attributes:
+      label: "Configuration"
+      description: "GPU vendor and model, dedicated VRAM, driver, OS build, CPU, RAM, project release and full commit SHA, and test date."
+    validations:
+      required: true
+  - type: textarea
+    id: field-2
+    attributes:
+      label: "Graphics"
+      description: "Renderer, render and output resolution, FSR mode and dispatched version, FG, V-Sync and limiter."
+    validations:
+      required: true
+  - type: textarea
+    id: field-3
+    attributes:
+      label: "Outcome"
+      description: "Startup, save load, region transitions, FSR fallback, any regressions and evidence."
+    validations:
+      required: true
+  - type: textarea
+    id: measurements
+    attributes:
+      label: "Test measurements"
+      description: "Tested region, average FPS, 1% low, P95/P99, dedicated or Vulkan memory usage and a redacted log. Say unavailable for metrics you did not collect."
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: Attachments
+      options:
+        - label: My attachments exclude game data, keys, personal paths, saves and SDK binaries.
+          required: true

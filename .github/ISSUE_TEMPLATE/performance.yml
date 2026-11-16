@@ -1,0 +1,31 @@
+name: "Performance report"
+description: "Share frame pacing and memory measurements"
+body:
+  - type: textarea
+    id: field-1
+    attributes:
+      label: "System and settings"
+      description: "Build SHA, driver, render and output resolution, FSR provider, FG, V-Sync and limiter."
+    validations:
+      required: true
+  - type: textarea
+    id: field-2
+    attributes:
+      label: "Method"
+      description: "Camera route, cache state, repeat count and recording duration."
+    validations:
+      required: true
+  - type: textarea
+    id: field-3
+    attributes:
+      label: "Metrics"
+      description: "Game FPS, present FPS, 1% low, P95 and P99, CPU and GPU time and memory counters with units."
+    validations:
+      required: true
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: Attachments
+      options:
+        - label: My attachments exclude game data, keys, personal paths, saves and SDK binaries.
+          required: true

@@ -8,9 +8,17 @@ param(
     [switch]$StableImport
 )
 $ErrorActionPreference = 'Stop'
-if ($StableImport -and (!$GameImport -or $Version -notin 'v0.1.5', 'v0.2.0-rc.3')) {
-    throw 'The verified baseline importer is available for v0.1.5 and v0.2.0-rc.3.'
+$publishedImportVersions = 'v0.1.6', 'v0.2.0-rc.4'
+$runtimeManifestVersions = @{
+    'v0.1.5' = 'v0.1.5'
+    'v0.2.0-rc.3' = 'v0.1.5'
+    'v0.1.6' = 'v0.1.6'
+    'v0.2.0-rc.4' = 'v0.2.0-rc.4'
 }
+if ($StableImport -and (!$GameImport -or !$runtimeManifestVersions.ContainsKey($Version))) {
+    throw "Use -StableImport with -GameImport and a verified version: $($runtimeManifestVersions.Keys | Sort-Object)."
+}
+$exactImport = $GameImport -and ($StableImport -or $Version -in $publishedImportVersions)
 $repo = Split-Path $PSScriptRoot
 $out = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($OutputDirectory)
 [void][IO.Directory]::CreateDirectory($out)
@@ -30,7 +38,9 @@ try {
     $files = @(
         'README.md', 'README.tr.md', 'LICENSE', 'THIRD-PARTY.md',
         'CHANGELOG.md', 'docs/install.md', 'docs/mako-build.md', 'docs/fsr-4.1.2.md',
-        'docs/fsr-context-recovery.md', 'docs/known-issues.md', 'docs/troubleshooting.md',
+        'docs/fsr-context-recovery.md', 'docs/KNOWN_ISSUES.md', 'docs/known-issues-history.md', 'docs/troubleshooting.md',
+        'docs/PROJECT_STATUS.md', 'docs/ARCHITECTURE.md', 'docs/BUILDING.md', 'docs/GPU_COMPATIBILITY.md', 'docs/TESTING.md', 'SUPPORT.md',
+        'docs/FIRST_CONTRIBUTION.md', 'docs/DOWNLOADS.md', 'docs/UPSTREAM-PROVENANCE.md', 'docs/SOCIAL_PREVIEW.md',
         'docs/memory-telemetry.md', 'docs/vulkan-memory.md', 'docs/validation-rx6700m.md',
         'docs/release.md', 'CONTRIBUTING.md', 'scripts/Test-LocalGame.ps1', 'scripts/Import-LocalGame.ps1', 'scripts/Measure-FrameTimes.ps1', 'scripts/Capture-VulkanSession.ps1', 'docs/fsr-profiling.md', 'docs/amd-compatibility.md', 'upstream/mako/LICENSE'
     )
@@ -49,8 +59,9 @@ try {
             Copy-Item -LiteralPath (Join-Path $repo $relative) -Destination (Join-Path $payload $relative)
         }
     }
-    if ($StableImport) {
-        Copy-Item -LiteralPath (Join-Path $repo 'installer/v0.1.5-runtime-sha256.txt') -Destination (Join-Path $payload 'STABLE-RUNTIME-SHA256.txt')
+    if ($exactImport) {
+        $manifestName = "$($runtimeManifestVersions[$Version])-runtime-sha256.txt"
+        Copy-Item -LiteralPath (Join-Path $repo "installer/$manifestName") -Destination (Join-Path $payload 'STABLE-RUNTIME-SHA256.txt')
     }
     Set-Content -LiteralPath (Join-Path $payload 'VERSION.txt') -Value $Version -Encoding ASCII
     $archive = Join-Path $stage "$base.zip"
@@ -60,7 +71,7 @@ try {
         $compiler = (Resolve-Path -LiteralPath $InnoCompiler).Path
         $definition = if ($GameImport) { 'installer/GameImport.iss' } else { 'installer/Tools.iss' }
         $compilerArgs = @("/DPackageVersion=$($Version.Substring(1))", "/DPayload=$payload", "/O$stage", "/F$base-setup")
-        if ($StableImport) { $compilerArgs += '/DStableRuntimeManifest=1' }
+        if ($exactImport) { $compilerArgs += '/DStableRuntimeManifest=1' }
         $compilerArgs += Join-Path $repo $definition
         & $compiler @compilerArgs
         if ($LASTEXITCODE -ne 0) { throw "ISCC failed with exit code $LASTEXITCODE." }
