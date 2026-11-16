@@ -17,12 +17,12 @@ Back up `game/user/save/` and `game/hookshot_options.ini` before updating. Build
 3. `<LocalRoot>\game` içinde `hookshot.exe`, `hookshot_vk.dll`, `image.bin` ve `romfs` bulunmalı. `Test-LocalGame.ps1 -GameDirectory 'D:\OOT-local\game'` ile dosyaları kontrol et.
 4. `hookshot.exe` dosyasını doğrudan aç. Shader ve pipeline önbellekleri kullanım sırasında oluşturulabilir. Güncellemeden önce `user/save/` ve `hookshot_options.ini` dosyasını yedekle. Aynı `LocalRoot` ile derleyerek mevcut oyun klasörünü kullan.
 
-## Windows x64 game import preview
+## Windows x64 release importers
 
 On Windows 11 x64, choose a new game directory and a completed Mako build
 from your own copy of the game. The source folder must contain matching
 `hookshot.exe`, `hookshot_vk.dll`, `image.bin` and `romfs/`. A build
-can be prepared locally with the source instructions above. Install then open
+can be prepared locally with the source instructions above and run directly. For a published importer, use the exact EXE/DLL hashes from its manifest. See [stable and experimental downloads](DOWNLOADS.md). After importing, open
 `hookshot.exe` directly in the destination. The destination can already
 contain `user/save/` and `hookshot_options.ini`, which Setup preserves.
 Uninstall removes installer-managed runtime files and shortcuts. It leaves
@@ -50,12 +50,12 @@ Nintendo game code is baked into the local EXE during recompilation.
 Public archives contain only installer code, support scripts and documentation.
 An extracted game dump by itself is insufficient for this import workflow.
 
-## Windows x64 aktarım önizlemesi
+## Windows x64 yayın paketleri
 
 Windows 11 x64 üzerinde yeni bir hedef klasör ile kendi oyun kopyanızdan
 hazırladığınız yerel Mako derlemesini seçin. Kaynak klasörde birbiriyle uyumlu
 `hookshot.exe`, `hookshot_vk.dll`, `image.bin` ve `romfs/` bulunmalı.
-Hedef bilgisayarda derleyici gerekmez. Kurulumdan sonra EXE doğrudan açılır.
+Yayın kurucusu, bu ikililerin manifestteki SHA-256 değerleriyle eşleşmesini gerektirir. [Kararlı ve deneysel indirmeler](DOWNLOADS.md) sayfasından doğru paketi seçin. Kaynaktan yeniden derlenen ikilileri çıktı klasöründen doğrudan çalıştırabilirsiniz.
 Hedefteki `user/save/` ve `hookshot_options.ini` korunur. Kaldırma aracı
 programı ve kısayolu kaldırır, save, ayarlar ve oyun verisini bırakır.
 Portable ZIP için yukarıdaki PowerShell komutu kullanılabilir.
