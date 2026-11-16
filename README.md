@@ -8,7 +8,7 @@ An open-source Windows x64 project for locally building and testing a Zelda: Oca
 
 [Mako 4.1.1 at `b77ac861`](https://github.com/Shakoquo/Mako/tree/b77ac86187330eb7447ac65ab23187baac4600ca) supplies Hookshot-derived AArch64 static recompilation, the Horizon host runtime and the NVN2-to-Vulkan renderer. This repository pins that source and layers AMD Vulkan compatibility and diagnostics on top. The [architecture guide](docs/ARCHITECTURE.md) maps the upstream code, project patches and build output.
 
-The repository welcomes Vulkan compatibility reports from AMD, NVIDIA and Intel users. Published hardware verification is currently limited to the Radeon RX 6700M configuration in the [GPU matrix](docs/GPU_COMPATIBILITY.md).
+Published hardware verification is limited to the Radeon RX 6700M configuration. Other AMD models, NVIDIA GPUs and Intel GPUs remain unverified. Vulkan compatibility reports are welcome. [GPU matrix](docs/GPU_COMPATIBILITY.md)
 
 ## What works and what is under investigation
 
@@ -25,7 +25,7 @@ See [project status](docs/PROJECT_STATUS.md), [known issues](docs/KNOWN_ISSUES.m
 ## Install or build
 
 - **Platform.** Windows 11 x64 and a Vulkan-capable GPU driver. The documented test PC had a Ryzen 7 5800H, Radeon RX 6700M and 32 GB RAM. The tested hardware is a reference configuration.
-- **Release setup.** The Windows setup and portable ZIP import an existing, matching local build. The downloads contain documentation and import tools. Supply the exact EXE/DLL pair and your own game data; setup checks the runtime manifest. [Installation guide](docs/install.md)
+- **Release setup.** The Windows setup and portable ZIP import an existing, matching local build. The downloads contain documentation and import tools. Supply the exact EXE/DLL pair and your own game data. See the [stable and experimental installation guides](docs/DOWNLOADS.md).
 - **Source build.** Supply compatible locally extracted ExeFS and RomFS, initialize the Mako submodule, and run the Windows build script with Python, LLVM MinGW and the pinned headers. Start the resulting `game/hookshot.exe`. [Commands and dependencies](docs/BUILDING.md)
 - **FSR runtime.** Obtain the official AMD Vulkan loader and upscaler pair for FSR 4.1.2. The test log identifies the provider actually dispatched. [FSR configuration and logs](docs/fsr-4.1.2.md)
 

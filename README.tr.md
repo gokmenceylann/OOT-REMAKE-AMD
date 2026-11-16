@@ -2,7 +2,7 @@
 
 Hookshot tabanlı Mako 4.1.1 üzerine kurulu Windows 11 x64 Ocarina of Time recomp projesi. AArch64 statik yeniden derleme, Horizon servisleri ve NVN2 → Vulkan çizimi kullanır. Oyun doğrudan `hookshot.exe` ile açılır.
 
-[Kararlı v0.1.6](https://github.com/gokmenceylann/OOT-REMAKE-AMD/releases/tag/v0.1.6) · [Tanılama ön yayını](https://github.com/gokmenceylann/OOT-REMAKE-AMD/releases/tag/v0.2.0-rc.4) · [İndirmeler](docs/DOWNLOADS.md) · [English](README.md)
+[Kararlı v0.1.6](https://github.com/gokmenceylann/OOT-REMAKE-AMD/releases/tag/v0.1.6) · [Deneysel v0.2.0-rc.4](https://github.com/gokmenceylann/OOT-REMAKE-AMD/releases/tag/v0.2.0-rc.4) · [İndirmeler ve sürüme özel kurulum](docs/DOWNLOADS.md) · [English](README.md)
 
 ## Hangi sürüm?
 
@@ -24,7 +24,7 @@ Windows x64 kurulum dosyası ve portable ZIP, **yerel oyun içe aktarma araçlar
 
 ## RX 6700M test durumu
 
-RX 6700M, Ryzen 7 5800H ve 32 GB RAM ile Vulkan başlangıcı, kayıt yükleme ve bölge geçişleri test edildi. Deneysel rc.4 koşularında FG kapalıyken gerçek FSR 4.1.2 Vulkan dispatch’i kaydedildi. Castle Town takılması, geçişlerde hazır olmayan çizimler ve bellek baskısı açık. NVIDIA ve Intel için yayımlanmış doğrulama yok. [GPU uyumluluğu ve test koşulları](docs/GPU_COMPATIBILITY.md)
+RX 6700M, Ryzen 7 5800H ve 32 GB RAM ile Vulkan başlangıcı, kayıt yükleme ve bölge geçişleri test edildi. Deneysel rc.4 koşularında FG kapalıyken gerçek FSR 4.1.2 Vulkan dispatch’i kaydedildi. Castle Town takılması, geçişlerde hazır olmayan çizimler ve bellek baskısı açık. Diğer AMD GPU’lar ile NVIDIA ve Intel GPU’lar için yayımlanmış doğrulama yok. [GPU uyumluluğu ve test koşulları](docs/GPU_COMPATIBILITY.md)
 
 [Kararlı taban ölçümü](docs/mako-411-baseline-validation.md) · [FSR kurulumu](docs/fsr-4.1.2.md#türkçe) · [Bellek telemetrisi](docs/memory-telemetry.md) · [Bilinen sorunlar](docs/KNOWN_ISSUES.md) · [Takılma incelemesi](docs/stutter-root-cause-report.md)
 
