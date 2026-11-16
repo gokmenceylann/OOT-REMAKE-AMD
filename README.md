@@ -2,7 +2,7 @@
 
 An open-source Windows x64 project for locally building and testing a Zelda: Ocarina of Time PC port with Mako 4.1.1, Vulkan and AMD FidelityFX Super Resolution. The project maintains renderer patches, reproducible build instructions and hardware test reports. Run the locally built `hookshot.exe` directly.
 
-[Stable v0.1.6](https://github.com/gokmenceylann/OOT-REMAKE-AMD/releases/tag/v0.1.6) · [Diagnostics v0.2.0-rc.4](https://github.com/gokmenceylann/OOT-REMAKE-AMD/releases/tag/v0.2.0-rc.4) · [Build from source](docs/BUILDING.md) · [Türkçe](README.tr.md)
+[Stable v0.1.6](https://github.com/gokmenceylann/OOT-REMAKE-AMD/releases/tag/v0.1.6) · [Diagnostics v0.2.0-rc.4](https://github.com/gokmenceylann/OOT-REMAKE-AMD/releases/tag/v0.2.0-rc.4) · [Downloads and requirements](docs/DOWNLOADS.md) · [Build from source](docs/BUILDING.md) · [Türkçe](README.tr.md)
 
 ## Project scope and upstream
 
@@ -15,7 +15,7 @@ The repository welcomes Vulkan compatibility reports from AMD, NVIDIA and Intel 
 | Area | Current evidence |
 | --- | --- |
 | Windows x64 Vulkan | The RX 6700M ran the direct executable, loaded a save and completed tested region transitions. |
-| FSR 4 integration | Logs recorded actual FSR 4.1.2 Vulkan dispatch on the RX 6700M with the matching AMD runtime. The renderer retains the FSR 3.1 fallback. |
+| FSR 4 Vulkan integration | Logs recorded actual FSR 4.1.2 Vulkan dispatch on the RX 6700M with the matching AMD runtime. The renderer retains the FSR 3.1 fallback. |
 | AMD Vulkan optimization | Project patches cover Vulkan memory allocation and budget diagnostics, cache import safeguards and FSR context handling. |
 | Experimental profiling | The rc.4 branch offers opt-in texture replay timing. The test build still showed memory pressure and some draws with pending pipelines. |
 | Frame generation and wider GPU coverage | Hardware compatibility and image stability remain unverified across devices. Published comparison runs used FG Off. |
@@ -31,7 +31,7 @@ See [project status](docs/PROJECT_STATUS.md), [known issues](docs/KNOWN_ISSUES.m
 
 ## Contribute and report problems
 
-Use [CONTRIBUTING.md](CONTRIBUTING.md) to choose a branch, validate your changes and open a pull request. Use the [issue forms](https://github.com/gokmenceylann/OOT-REMAKE-AMD/issues/new/choose) for bugs, GPU tests, performance measurements or visual artifacts. Include your exact build and driver. Share focused logs and numerical summaries with personal information removed.
+Start with the [first contribution guide](docs/FIRST_CONTRIBUTION.md) and [support](SUPPORT.md). Use [CONTRIBUTING.md](CONTRIBUTING.md) to choose a branch, validate your changes and open a pull request. Use the [issue forms](https://github.com/gokmenceylann/OOT-REMAKE-AMD/issues/new/choose) for bugs, GPU tests, performance measurements or visual artifacts. Include your exact build and driver. Share focused logs and numerical summaries with personal information removed.
 
 ## License and related projects
 

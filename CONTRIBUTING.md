@@ -1,6 +1,6 @@
 # Contributing
 
-Start with [project status](docs/PROJECT_STATUS.md), [architecture](docs/ARCHITECTURE.md) and the [Windows build guide](docs/BUILDING.md).
+New contributors can follow the [first contribution guide](docs/FIRST_CONTRIBUTION.md). Start with [project status](docs/PROJECT_STATUS.md), [architecture](docs/ARCHITECTURE.md), [upstream provenance](docs/UPSTREAM-PROVENANCE.md) and the [Windows build guide](docs/BUILDING.md).
 
 1. Fork the repository. Base documentation and packaging changes on `main`. Base rc.4 diagnostics or renderer work on `performance/stable-mako-411` and open the pull request against that branch. Include the starting SHA.
 2. Initialize the pinned Mako submodule in a clean checkout. Put local builds and game data outside Git. Keep upstream-derived changes in small patches and note the source commit and license.

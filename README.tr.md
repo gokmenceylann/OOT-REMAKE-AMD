@@ -2,7 +2,7 @@
 
 Hookshot tabanlı Mako 4.1.1 üzerine kurulu Windows 11 x64 Ocarina of Time recomp projesi. AArch64 statik yeniden derleme, Horizon servisleri ve NVN2 → Vulkan çizimi kullanır. Oyun doğrudan `hookshot.exe` ile açılır.
 
-[Kararlı v0.1.6](https://github.com/gokmenceylann/OOT-REMAKE-AMD/releases/tag/v0.1.6) · [Tanılama ön yayını](https://github.com/gokmenceylann/OOT-REMAKE-AMD/releases/tag/v0.2.0-rc.4) · [English](README.md)
+[Kararlı v0.1.6](https://github.com/gokmenceylann/OOT-REMAKE-AMD/releases/tag/v0.1.6) · [Tanılama ön yayını](https://github.com/gokmenceylann/OOT-REMAKE-AMD/releases/tag/v0.2.0-rc.4) · [İndirmeler](docs/DOWNLOADS.md) · [English](README.md)
 
 ## Hangi sürüm?
 

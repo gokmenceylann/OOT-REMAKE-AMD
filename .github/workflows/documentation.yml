@@ -20,3 +20,7 @@ jobs:
           python-version: '3.12'
       - name: Check community files and Markdown links
         run: python -I -B scripts/check_docs.py
+      - name: Validate issue forms
+        run: |
+          npm install --prefix "$RUNNER_TEMP/docs-check-tools" --ignore-scripts --no-audit --no-fund yaml@2.9.1
+          node scripts/check_issue_forms.cjs "$RUNNER_TEMP/docs-check-tools"
