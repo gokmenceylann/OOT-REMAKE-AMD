@@ -1,0 +1,21 @@
+diff --git a/gpu/vk/vk_draw.cpp b/gpu/vk/vk_draw.cpp
+--- a/gpu/vk/vk_draw.cpp
++++ b/gpu/vk/vk_draw.cpp
+@@ -8566,13 +8593,10 @@ bool taau_stand_in(VkCommandBuffer cmd, const NvnState& s, const Program& p) {
+ }
+ 
+ bool precompile_wanted() {
+-#if defined(HOOKSHOT_RELEASE)
+-    bool on = true;
+-#else
+-    bool on = false;
+-#endif
+-    if (const char* e = getenv("RX_VK_PRECOMPILE")) on = atoi(e) != 0;
+-    return on;
++    // Keep the stable install's on-demand startup, including Release builds.
++    // A separate --prepare-shaders run takes its own path in vk_main.cpp.
++    const char* e = getenv("RX_VK_PRECOMPILE");
++    return e && atoi(e) != 0;
+ }
+ namespace {
+ std::atomic<bool> prepare_halt{false};
